@@ -1,0 +1,40 @@
+# ── Dependencies ────────────────────────────────────────────────────────
+node_modules/
+
+# ── Next.js build output ────────────────────────────────────────────────
+.next/
+out/
+
+# ── Build caches ────────────────────────────────────────────────────────
+*.tsbuildinfo
+
+# ── Database ────────────────────────────────────────────────────────────
+# Local SQLite data — never commit the user's data (dev.db + WAL/SHM/journal).
+prisma/dev.db
+prisma/dev.db-journal
+prisma/dev.db-wal
+prisma/dev.db-shm
+# Automatic db:reset backups (npm run db:backup / db:reset) — never commit.
+prisma/backups/
+
+# ── Logs ────────────────────────────────────────────────────────────────
+*.log
+npm-debug.log*
+
+# ── Env ─────────────────────────────────────────────────────────────────
+# NOTE: .env is committed ON PURPOSE — it only contains the local, non-secret
+# DATABASE_URL that prisma/schema.prisma requires (env("DATABASE_URL") has no
+# fallback), so a fresh clone works out of the box. If .env ever gains real
+# secrets, move it here and commit a .env.example instead.
+# .env
+# .env.*.local
+
+# ── Editor / OS ─────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# ── Scratch debugging leftovers (root-level) ────────────────────────────
+test-rhyme.js
+test-rhyme.mjs

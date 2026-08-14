@@ -1,0 +1,44 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # The suites (unit + E2E) run against an isolated copy of prisma/dev.db,
+      # so the file must exist with the current schema. .env is committed and
+      # provides DATABASE_URL, so no extra env setup is needed.
+      - name: Create the database schema
+        run: npx prisma db push
+
+      - name: Seed demo data
+        run: npm run db:seed
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      # Unit suites first, then the E2E browser suite (spawns its own dev
+      # server on a free port + headless Chrome — nothing to set up here).
+      # Chrome lives at /usr/bin/google-chrome on the hosted runner; under CI
+      # the suite adds --no-sandbox/--disable-dev-shm-usage automatically.
+      - name: Unit + E2E suites
+        run: npm test

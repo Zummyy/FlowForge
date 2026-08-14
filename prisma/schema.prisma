@@ -1,0 +1,316 @@
+// FlowForge - Complete Prisma Schema for SQLite
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  // Default (file:./dev.db) comes from .env; tests override DATABASE_URL to
+  // point at an isolated copy so they never touch the real dev database.
+  url      = env("DATABASE_URL")
+}
+
+// ─── LYRICS & WRITING ────────────────────────────────────────────────
+
+model Lyric {
+  id          String   @id @default(cuid())
+  title       String
+  content     String
+  bpm         Int?
+  syllableCount Int?
+  lineCount   Int?
+  verseCount  Int?
+  wordCount   Int?
+  status      String   @default("draft") // draft, published, archived
+  isPublic    Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  versions      LyricVersion[]
+  moodboardItems MoodboardItem[]
+  inspirations  LyricalInspiration[]
+  posts         CommunityPost[]
+  submissions   ChallengeSubmission[]
+  exportLogs    ExportLog[]
+
+  @@index([status])
+  @@index([createdAt])
+}
+
+model LyricVersion {
+  id        String   @id @default(cuid())
+  lyricId   String
+  content   String
+  label     String?
+  snapshot  Int      @default(1)
+  syllableCount Int?
+  // Set when the version is moved out of the active list (either
+  // automatically when a track exceeds MAX_ACTIVE_VERSIONS_PER_LYRIC, or
+  // manually). NULL = active. Archived versions can be restored or purged.
+  archivedAt DateTime?
+  createdAt DateTime @default(now())
+
+  lyric Lyric @relation(fields: [lyricId], references: [id], onDelete: Cascade)
+
+  @@index([lyricId])
+  @@index([lyricId, archivedAt])
+}
+
+// ─── BEATS & AUDIO ───────────────────────────────────────────────────
+
+model Beat {
+  id          String   @id @default(cuid())
+  title       String
+  artist      String?
+  bpm         Int      @default(90)
+  key         String?
+  genre       String?
+  tags        String? // JSON array stored as string
+  duration    Int? // seconds
+  filePath    String?
+  isStems     Boolean  @default(false)
+  stemsData   String? // JSON: {drums: path, bass: path, melody: path, vocals: path}
+  coverUrl    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([bpm])
+  @@index([genre])
+}
+
+// A project saved from the Studio into „Gotowe Numery” — the FULL editable
+// state (beat settings, teleprompter lyrics, takes, clip timeline) as JSON.
+// DB-primary with a localStorage mirror (flowforge-beats) as the offline
+// cache, so the library survives across browsers.
+model SavedProject {
+  id        String   @id @default(cuid())
+  title     String
+  data      String // JSON: the SavedProject payload from the Studio
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([title])
+}
+
+// ─── COVER ART ───────────────────────────────────────────────────────
+
+model CoverArt {
+  id          String   @id @default(cuid())
+  title       String
+  artistName  String
+  bgColor     String   @default("#09090b")
+  textColor   String   @default("#f59e0b")
+  bgPattern   String? // gradient, noise, geometric, etc.
+  filterStyle String? // none, grain, vignette, duotone
+  fontSize    Int      @default(48)
+  fontFamily  String   @default("Inter")
+  imageUrl    String? // final generated image
+  layoutData  String? // JSON: positioning data
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([createdAt])
+}
+
+// ─── COMMUNITY ───────────────────────────────────────────────────────
+
+model CommunityPost {
+  id          String   @id @default(cuid())
+  lyricId     String?
+  title       String
+  content     String
+  authorName  String   @default("Anonymous")
+  authorAvatar String?
+  isFeatured  Boolean  @default(false)
+  viewCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  lyric       Lyric?   @relation(fields: [lyricId], references: [id], onDelete: SetNull)
+  ratings     Rating[]
+  comments    Comment[]
+
+  @@index([createdAt])
+  @@index([isFeatured])
+}
+
+model Rating {
+  id        String   @id @default(cuid())
+  postId    String
+  score     Int      // 1-5
+  raterName String   @default("Anonymous")
+  createdAt DateTime @default(now())
+
+  post CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, raterName])
+}
+
+model Comment {
+  id         String   @id @default(cuid())
+  postId     String
+  authorName String   @default("Anonymous")
+  content    String
+  createdAt  DateTime @default(now())
+
+  post CommunityPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  @@index([postId])
+}
+
+// ─── CHALLENGES & CYPHER ─────────────────────────────────────────────
+
+model Challenge {
+  id          String   @id @default(cuid())
+  title       String
+  description String
+  theme       String? // topic/prompt
+  beatUrl     String? // suggested beat
+  rules       String? // special rules
+  startDate   DateTime @default(now())
+  endDate     DateTime
+  isActive    Boolean  @default(true)
+  maxParticipants Int?
+  prize       String?
+  createdAt   DateTime @default(now())
+
+  submissions ChallengeSubmission[]
+
+  @@index([isActive])
+  @@index([endDate])
+}
+
+model ChallengeSubmission {
+  id          String   @id @default(cuid())
+  challengeId String
+  authorName  String   @default("Anonymous")
+  title       String
+  content     String
+  voteCount   Int      @default(0)
+  lyricsId    String?
+  createdAt   DateTime @default(now())
+
+  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  lyric     Lyric?    @relation(fields: [lyricsId], references: [id], onDelete: SetNull)
+
+  @@index([challengeId])
+  @@index([voteCount])
+}
+
+// ─── INSPIRATIONS & HALL OF FAME ─────────────────────────────────────
+
+model LyricalInspiration {
+  id          String   @id @default(cuid())
+  artist      String
+  songTitle   String
+  lyrics      String
+  analysis    String? // rhyme scheme analysis
+  tags        String? // JSON: ["wielosylabowe", "metafory", "storytelling"]
+  difficulty  String   @default("medium") // easy, medium, hard
+  year        Int?
+  album       String?
+  isFeatured  Boolean  @default(false)
+  voteCount   Int      @default(0)
+  createdAt   DateTime @default(now())
+
+  lyric Lyric? @relation(fields: [lyricId], references: [id], onDelete: SetNull)
+  lyricId String?
+
+  @@index([difficulty])
+  @@index([isFeatured])
+}
+
+// ─── BUDGET & FINANCE ────────────────────────────────────────────────
+
+model BudgetExpense {
+  id          String   @id @default(cuid())
+  category    String   // beat_license, mix_master, cover_art, promo, studio, equipment, other
+  title       String
+  amount      Float
+  currency    String   @default("PLN")
+  description String?
+  date        DateTime @default(now())
+  project     String?  // track/album name
+  receiptUrl  String?
+  isRecurring Boolean  @default(false)
+  createdAt   DateTime @default(now())
+
+  @@index([category])
+  @@index([date])
+  @@index([project])
+}
+
+// ─── GAMIFICATION & ACHIEVEMENTS ─────────────────────────────────────
+
+model UserAchievement {
+  id          String   @id @default(cuid())
+  badgeId     String
+  badgeName   String
+  badgeIcon   String   // emoji
+  badgeDescription String
+  points      Int      @default(0)
+  earnedAt    DateTime @default(now())
+
+  @@unique([badgeId])
+}
+
+model UserProfile {
+  id            String   @id @default("default")
+  displayName   String   @default("MC")
+  totalPoints   Int      @default(0)
+  level         Int      @default(1)
+  avatarEmoji   String   @default("🎤")
+  bio           String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+}
+
+// ─── MOODBOARD ───────────────────────────────────────────────────────
+
+model MoodboardItem {
+  id          String   @id @default(cuid())
+  lyricId     String?
+  type        String   @default("note") // image, link, note, color
+  title       String?
+  content     String   // URL, text, or hex color
+  position    Int      @default(0)
+  width       Int      @default(1)
+  height      Int      @default(1)
+  createdAt   DateTime @default(now())
+
+  lyric Lyric? @relation(fields: [lyricId], references: [id], onDelete: Cascade)
+
+  @@index([lyricId])
+}
+
+// ─── CHALLENGE PROGRESS ───────────────────────────────────────────────
+// Personal challenge progress (stats + completion timestamps) for the
+// achievement-style challenges shown on /challenges. Kept separate from the
+// community `Challenge`/`ChallengeSubmission` tables, which model cypher
+// definitions + submissions (voting) — a different feature.
+
+model ChallengeProgress {
+  id        String   @id @default("default")
+  content   String   // JSON: { completed, stats, updatedAt }
+  updatedAt DateTime @updatedAt
+}
+
+// ─── RELEASE PLAN ────────────────────────────────────────────────────
+
+model ReleasePlan {
+  id        String   @id @default("default")
+  content   String   // JSON: { milestones, projectStatus, targetDate }
+  updatedAt DateTime @updatedAt
+}
+
+// ─── EXPORT LOGS ─────────────────────────────────────────────────────
+
+model ExportLog {
+  id          String   @id @default(cuid())
+  lyricId     String?
+  format      String   @default("txt") // txt, zip, pdf
+  filePath    String?
+  createdAt   DateTime @default(now())
+
+  lyric Lyric? @relation(fields: [lyricId], references: [id], onDelete: SetNull)
+}
