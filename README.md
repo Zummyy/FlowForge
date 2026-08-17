@@ -1,5 +1,7 @@
 # FlowForge 🎤
 
+[![CI](https://img.shields.io/github/actions/workflow/status/Zummyy/FlowForge/ci.yml?branch=main&label=CI&logo=github)](https://github.com/Zummyy/FlowForge/actions/workflows/ci.yml)
+
 A Next.js studio toolkit for rappers and lyricists — write verses in The Vault
 (with rhyme analysis, metronome, flow meter, moodboard, release planner), record
 takes and arrange clips in the Studio, then save finished numbers to the
