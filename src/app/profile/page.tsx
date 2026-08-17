@@ -79,6 +79,8 @@ export default function ProfilePage() {
     if (ok) {
       setEditingProfile(false);
       showToast("💾 Zapisano profil");
+      // The sidebar's profile chip (DB-primary) refreshes without a reload.
+      window.dispatchEvent(new CustomEvent("flowforge-profile-updated"));
     } else {
       showToast("⚠️ Nie udało się zapisać profilu", "info");
     }

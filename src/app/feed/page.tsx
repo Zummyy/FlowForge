@@ -6,7 +6,7 @@ import { useToast } from "@/components/studio/useToast";
 import { ToastView } from "@/components/studio/ToastView";
 import { fetchDbOrCache, saveCache, tryDbWrite } from "@/lib/db-sync";
 import { createPost, getFeedPosts } from "@/actions/community";
-import { addComment, ratePost } from "@/actions/lyrics";
+import { addComment, getPublicLyric, ratePost } from "@/actions/lyrics";
 
 const CACHE_KEY = "flowforge-feed-posts";
 
@@ -68,6 +68,18 @@ interface Comment {
   createdAt: string;
 }
 
+/** A published lyric rendered via /feed?shared=<id>. */
+interface SharedLyric {
+  id: string;
+  title: string;
+  content: string;
+  lineCount: number;
+  verseCount: number;
+  syllableCount: number;
+  wordCount: number;
+  publishedAt: string;
+}
+
 export default function FeedPage() {
   const [posts, setPosts] = useState<Post[]>([]);
   const [newPost, setNewPost] = useState({ title: "", content: "" });
@@ -75,8 +87,20 @@ export default function FeedPage() {
   const [expandedPost, setExpandedPost] = useState<string | null>(null);
   const [newComment, setNewComment] = useState("");
   const [postsLoaded, setPostsLoaded] = useState(false);
+  const [sharedLyric, setSharedLyric] = useState<SharedLyric | null>(null);
 
   const { toast, showToast } = useToast();
+
+  // ── /feed?shared=<id> — show a published lyric (read-only) at the top ──
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("shared");
+    if (!id) return;
+    getPublicLyric(id)
+      .then((l) => setSharedLyric(l))
+      .catch(() => {
+        /* not public / missing — nothing to show */
+      });
+  }, []);
 
   // ── Load posts from the DB (fallback: localStorage cache) ──
   useEffect(() => {
@@ -223,6 +247,31 @@ export default function FeedPage() {
             ✍️ Opublikuj Tekst
           </button>
         </div>
+
+        {/* Shared published lyric — /feed?shared=<id> */}
+        {sharedLyric && (
+          <div className="rounded-2xl bg-gradient-to-br from-emerald-500/10 to-teal-500/5 border border-emerald-500/20 p-5">
+            <div className="flex items-center justify-between mb-3">
+              <p className="text-[10px] text-zinc-500 uppercase tracking-widest font-medium">
+                📢 Opublikowany utwór
+              </p>
+              <button
+                onClick={() => setSharedLyric(null)}
+                className="text-xs text-zinc-500 hover:text-white transition-colors"
+              >
+                ✕ Zamknij
+              </button>
+            </div>
+            <h3 className="text-lg font-bold text-white mb-2">{sharedLyric.title}</h3>
+            <div className="text-sm text-zinc-300 font-mono whitespace-pre-wrap leading-relaxed bg-zinc-800/30 rounded-xl p-4">
+              {sharedLyric.content}
+            </div>
+            <p className="text-[11px] text-zinc-500 mt-3">
+              {sharedLyric.lineCount} wersów • {sharedLyric.verseCount} zwrotek • {sharedLyric.syllableCount} sylab •{" "}
+              {sharedLyric.wordCount} słów • opublikowano {fmtDate(sharedLyric.publishedAt)}
+            </p>
+          </div>
+        )}
 
         {/* New Post Form */}
         {showNewPostForm && (

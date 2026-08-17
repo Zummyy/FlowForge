@@ -13,7 +13,7 @@ import { ToastView } from "@/components/studio/ToastView";
 import { SaveProjectModal } from "@/components/studio/SaveProjectModal";
 import { recordChallengeEvent } from "@/lib/challenges";
 import type { ChallengeEvent } from "@/lib/challenges";
-import { saveProject } from "@/actions/beats";
+import { getBeatById, recordBeatPlayed, saveProject } from "@/actions/beats";
 import { tryDbWrite } from "@/lib/db-sync";
 import type { Clip, SavedProject, SessionData, TrimEdge, VaultVersion, VocalTake } from "@/components/studio/types";
 import { useStudio, blobToDataURL, dataUrlToBlob } from "@/components/studio/StudioContext";
@@ -42,6 +42,26 @@ const STORAGE_KEYS = {
   versions: "flowforge-versions",
   library: "flowforge-beats",
 } as const;
+
+/**
+ * Pick a playable single source for a beat row loaded via the deep-link.
+ * The Studio has one backing track (no stem mixer there), so a stems beat
+ * contributes its drums channel — the rhythmic backbone — falling back to
+ * any available channel.
+ */
+function pickBeatAudioSrc(
+  filePath: string | null | undefined,
+  stemsData: string | null | undefined
+): string | null {
+  if (filePath) return filePath;
+  if (!stemsData) return null;
+  try {
+    const parsed = JSON.parse(stemsData) as Record<string, string>;
+    return parsed.drums || Object.values(parsed)[0] || null;
+  } catch {
+    return null;
+  }
+}
 
 /** How long a replaced beat's object URL is kept before deferred revocation (ms). */
 const BEAT_REVOKE_DELAY_MS = 3000;
@@ -146,8 +166,12 @@ export default function StudioPage() {
   /** Live mirror of `takes` so async persistence can re-serialize the latest list. */
   const takesRef = useRef<VocalTake[]>([]);
   takesRef.current = takes;
-  /** takeId → persistable data URL (blob URLs die on reload). */
+  /** takeId → server URL of the uploaded recording (/api/recordings/<id>). */
+  const takeAudioUrls = useRef<Map<string, string>>(new Map());
+  /** takeId → legacy data URL — only for takes whose upload failed (offline). */
   const takeDataUrls = useRef<Map<string, string>>(new Map());
+  /** Pending (undo-window) recording-file deletions — takeId → timer id. */
+  const pendingRecordingDeletes = useRef<Map<string, number>>(new Map());
   /**
    * Count of in-flight blob→dataURL conversions. While > 0 the takes sync
    * effect stays silent — the conversion completion re-pushes the full list,
@@ -185,25 +209,88 @@ export default function StudioPage() {
   /** Serialize takes for persistence/undo snapshots (skips audio-less entries). */
   const serializeTakesForPersistence = useCallback((list: VocalTake[]): SerializedTake[] => {
     return list
-      .map((t): SerializedTake => ({
-        id: t.id,
-        label: t.label,
-        duration: t.duration,
-        offset: t.offset,
-        volume: t.volume,
-        isMuted: t.isMuted,
-        isSoloed: t.isSoloed,
-        trimStart: t.trimStart,
-        trimEnd: t.trimEnd,
-        dataUrl: takeDataUrls.current.get(t.id) ?? "",
-      }))
-      .filter((t) => t.dataUrl.length > 0);
+      .map((t): SerializedTake => {
+        const audioUrl = takeAudioUrls.current.get(t.id) ?? "";
+        return {
+          id: t.id,
+          label: t.label,
+          duration: t.duration,
+          offset: t.offset,
+          volume: t.volume,
+          isMuted: t.isMuted,
+          isSoloed: t.isSoloed,
+          trimStart: t.trimStart,
+          trimEnd: t.trimEnd,
+          audioUrl: audioUrl || undefined,
+          // Legacy fallback only when no server copy exists (upload failed).
+          dataUrl: audioUrl ? undefined : takeDataUrls.current.get(t.id) ?? undefined,
+        };
+      })
+      .filter((t) => !!t.audioUrl || !!t.dataUrl);
   }, []);
 
   /** Serialize the current takes (from the ref) and push them to the context. */
   const pushTakesSnapshot = useCallback(() => {
     persistTakes(serializeTakesForPersistence(takesRef.current));
   }, [persistTakes, serializeTakesForPersistence]);
+
+  /**
+   * Upload a recorded take to the server — the durable, cross-browser copy
+   * (audioUrl). Returns the API URL or null when the upload fails (offline /
+   * API down — the caller falls back to a same-browser data URL).
+   */
+  const uploadTakeRecording = useCallback(async (blob: Blob, takeId: string): Promise<string | null> => {
+    try {
+      const res = await fetch("/api/recordings", {
+        method: "POST",
+        headers: {
+          "x-take-id": takeId,
+          "content-type": blob.type || "audio/webm",
+        },
+        body: blob,
+      });
+      if (!res.ok) return null;
+      const json = (await res.json()) as { url?: string };
+      return json.url ?? null;
+    } catch {
+      return null;
+    }
+  }, []);
+
+  /**
+   * Delete a take's uploaded file once the undo window passes — cancellable
+   * via `cancelRecordingDelete` when the user hits „↩️ Cofnij”.
+   */
+  const scheduleRecordingDelete = useCallback((takeId: string) => {
+    const prev = pendingRecordingDeletes.current.get(takeId);
+    if (prev) window.clearTimeout(prev);
+    const timer = window.setTimeout(() => {
+      pendingRecordingDeletes.current.delete(takeId);
+      fetch("/api/recordings", {
+        method: "DELETE",
+        headers: { "x-take-id": takeId },
+      }).catch(() => {
+        /* best-effort cleanup */
+      });
+    }, TOAST_ACTION_DURATION_MS + 500);
+    pendingRecordingDeletes.current.set(takeId, timer);
+  }, []);
+
+  const cancelRecordingDelete = useCallback((takeId: string) => {
+    const timer = pendingRecordingDeletes.current.get(takeId);
+    if (timer) {
+      window.clearTimeout(timer);
+      pendingRecordingDeletes.current.delete(takeId);
+    }
+  }, []);
+
+  // Clear pending recording-file deletions on unmount (takes are gone anyway).
+  useEffect(() => {
+    return () => {
+      pendingRecordingDeletes.current.forEach((timer) => window.clearTimeout(timer));
+      pendingRecordingDeletes.current.clear();
+    };
+  }, []);
 
   /**
    * Rebuild the editor from a persisted snapshot. Shared by the mount
@@ -234,7 +321,12 @@ export default function StudioPage() {
 
       // 2. Takes + 3. clips — rebuild the timeline arrangement.
       if (s.takes && s.takes.length > 0) {
-        takeDataUrls.current = new Map(s.takes.map((t) => [t.id, t.dataUrl]));
+        takeAudioUrls.current = new Map(
+          s.takes.filter((t) => t.audioUrl).map((t) => [t.id, t.audioUrl as string])
+        );
+        takeDataUrls.current = new Map(
+          s.takes.filter((t) => !t.audioUrl && t.dataUrl).map((t) => [t.id, t.dataUrl as string])
+        );
         const restored: VocalTake[] = s.takes.map((t) => ({
           id: t.id,
           label: t.label,
@@ -245,13 +337,19 @@ export default function StudioPage() {
           isSoloed: t.isSoloed,
           trimStart: t.trimStart,
           trimEnd: t.trimEnd,
-          // Data URLs are valid <audio> src — no object URL needed.
-          url: t.dataUrl,
+          // Both server URLs and data URLs are valid <audio> src.
+          url: t.audioUrl ?? t.dataUrl ?? "",
         }));
         setTakes(restored);
-        // Rebuild Blobs asynchronously so waveform decoding still works.
+        // Rebuild Blobs asynchronously so waveform decoding still works —
+        // server URLs are fetched, legacy data URLs decoded locally.
         s.takes.forEach((st) => {
-          dataUrlToBlob(st.dataUrl)
+          const restoreBlob = st.audioUrl
+            ? fetch(st.audioUrl).then((r) =>
+                r.ok ? r.blob() : Promise.reject(new Error(`fetch ${r.status}`))
+              )
+            : dataUrlToBlob(st.dataUrl ?? "");
+          restoreBlob
             .then((blob) => {
               setTakes((prev) => prev.map((p) => (p.id === st.id ? { ...p, blob } : p)));
             })
@@ -259,6 +357,8 @@ export default function StudioPage() {
         });
         if (s.clips && s.clips.length > 0) restoreClips(s.clips);
       } else {
+        takeAudioUrls.current = new Map();
+        takeDataUrls.current = new Map();
         setTakes([]);
         restoreClips([]);
       }
@@ -297,6 +397,37 @@ export default function StudioPage() {
     hydratedRef.current = true;
     restoreFromState(persistedState);
     setHydrated(true);
+
+    // ── Deep-link: /studio?beatId=<id> (dashboard „Ostatnio Użyte” widget
+    //    „🎙️ Nagraj”) loads that exact beat into the session — explicit
+    //    intent wins over whatever the persisted session had. ──
+    const beatId = new URLSearchParams(window.location.search).get("beatId");
+    if (beatId) {
+      getBeatById(beatId)
+        .then((row) => {
+          if (!row) return;
+          const src = pickBeatAudioSrc(row.filePath, row.stemsData);
+          if (!src) return;
+          scheduleBeatUrlRevoke(beatAudioRef.current);
+          if (beatAudioRef.current) beatAudioRef.current.pause();
+          const audio = new Audio(src);
+          audio.loop = true;
+          audio.volume = persistedState.beatVolume ?? 0.7;
+          beatAudioRef.current = audio;
+          setBeatName(row.title);
+          audio.addEventListener("loadedmetadata", () => {
+            if (audio.duration && isFinite(audio.duration)) setTotalDuration(Math.floor(audio.duration));
+          });
+          persistBeat(row.title, src);
+          fireChallengeEvent({ type: "increment", stat: "beats" });
+          // Real usage history — the widget's „Ostatnio Użyte” order.
+          tryDbWrite(() => recordBeatPlayed(row.id));
+          showToast(`🎵 Załadowano bit: ${row.title}`);
+        })
+        .catch(() => {
+          /* beat not found — the session stays as-is */
+        });
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -608,6 +739,7 @@ export default function StudioPage() {
     takesRef.current.forEach((t) => {
       if (t.url && t.url.startsWith("blob:")) URL.revokeObjectURL(t.url);
     });
+    takeAudioUrls.current.clear();
     takeDataUrls.current.clear();
 
     // Reset every piece of local editor state.
@@ -741,15 +873,24 @@ export default function StudioPage() {
           },
           ...prev,
         ]);
-        // Persist a durable copy (data URL) so the take survives navigation.
+        // Persist a durable copy so the take survives navigation: upload to
+        // the server (audioUrl) with a data-URL fallback when offline / the
+        // API is unreachable (same-browser survival only, best-effort).
         pendingTakeConversions.current += 1;
-        blobToDataURL(blob)
-          .then((dataUrl) => {
-            takeDataUrls.current.set(id, dataUrl);
-            pendingTakeConversions.current -= 1;
-            pushTakesSnapshot();
+        uploadTakeRecording(blob, id)
+          .then((audioUrl) => {
+            if (audioUrl) {
+              takeAudioUrls.current.set(id, audioUrl);
+            } else {
+              return blobToDataURL(blob).then((dataUrl) => {
+                takeDataUrls.current.set(id, dataUrl);
+              });
+            }
           })
           .catch(() => {
+            /* upload + fallback both failed — take stays session-only */
+          })
+          .finally(() => {
             pendingTakeConversions.current -= 1;
             pushTakesSnapshot();
           });
@@ -956,8 +1097,10 @@ export default function StudioPage() {
     if (!snapshot) return;
     takeUndoRef.current = null;
     const { take, clips: takeClips, index, wasSelected } = snapshot;
-    // The take is back — cancel its scheduled object-URL revocation.
+    // The take is back — cancel its scheduled object-URL revocation and the
+    // pending deletion of its uploaded recording file.
     cancelRevoke(take.url);
+    cancelRecordingDelete(take.id);
     // Re-insert at the original position in the takes list.
     setTakes((prev) => {
       const next = [...prev];
@@ -970,7 +1113,7 @@ export default function StudioPage() {
       setSelectedClipId(null);
     }
     showToast(`↩️ Przywrócono take: ${take.label}`);
-  }, [restoreTakeClips, showToast, cancelRevoke]);
+  }, [restoreTakeClips, showToast, cancelRevoke, cancelRecordingDelete]);
 
   const deleteTake = useCallback(
     (id: string) => {
@@ -1008,12 +1151,15 @@ export default function StudioPage() {
         onClick: () => handleUndoDeleteTake(),
       });
       // The URL is deliberately kept alive during the undo window; revoke it
-      // once that window passes (and drop the stale undo snapshot).
+      // once that window passes (and drop the stale undo snapshot). The
+      // uploaded file is deleted on the same schedule — cancelled if the user
+      // hits „↩️ Cofnij” before it fires.
       revokeAfter(take.url, TOAST_ACTION_DURATION_MS + 500, (url) => {
         if (takeUndoRef.current?.take.url === url) takeUndoRef.current = null;
       });
+      scheduleRecordingDelete(id);
     },
-    [resetTakeClips, selectedTakeId, clips, showToast, handleUndoDeleteTake, revokeAfter]
+    [resetTakeClips, selectedTakeId, clips, showToast, handleUndoDeleteTake, revokeAfter, scheduleRecordingDelete]
   );
 
   const exportTake = useCallback((take: VocalTake) => {
@@ -1154,6 +1300,7 @@ export default function StudioPage() {
         isSoloed: t.isSoloed,
         trimStart: t.trimStart,
         trimEnd: t.trimEnd,
+        audioUrl: takeAudioUrls.current.get(t.id) ?? undefined,
       })),
       clips: Array.from(clips.entries()).map(([takeId, arr]) => ({
         takeId,

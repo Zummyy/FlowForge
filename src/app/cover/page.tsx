@@ -2,6 +2,7 @@
 
 import { useState, useRef, useCallback, useEffect } from "react";
 import AppShell from "@/components/layout/AppShell";
+import { ConfirmDialog } from "@/components/studio/ConfirmDialog";
 import { useToast } from "@/components/studio/useToast";
 import { ToastView } from "@/components/studio/ToastView";
 import { loadCache, saveCache, tryDbWrite } from "@/lib/db-sync";
@@ -56,6 +57,8 @@ export default function CoverPage() {
 
   // ── Saved covers (DB-primary + localStorage mirror) ──
   const [savedCovers, setSavedCovers] = useState<DbCover[]>([]);
+  // Delete confirmation — covers were removed with a single click before.
+  const [deleteTarget, setDeleteTarget] = useState<{ id: string; title: string } | null>(null);
   const [coversLoaded, setCoversLoaded] = useState(false);
 
   // Render the current settings to a 1080×1080 canvas (shared by the PNG
@@ -509,7 +512,7 @@ export default function CoverPage() {
                         ↩️ Wczytaj
                       </button>
                       <button
-                        onClick={() => handleDeleteCover(cover.id, cover.title)}
+                        onClick={() => setDeleteTarget({ id: cover.id, title: cover.title })}
                         className="px-2.5 py-1 rounded-lg bg-zinc-800 text-zinc-400 text-[11px] font-medium hover:bg-red-500/10 hover:text-red-400 transition-colors"
                       >
                         🗑️
@@ -528,6 +531,22 @@ export default function CoverPage() {
         </div>
       </div>
       <ToastView toast={toast} />
+
+      {/* Delete confirmation — the gallery row is removed permanently. */}
+      <ConfirmDialog
+        open={!!deleteTarget}
+        title="Usuń okładkę?"
+        description={
+          deleteTarget ? `„${deleteTarget.title}” zostanie usunięta z galerii na stałe.` : undefined
+        }
+        confirmLabel="Usuń"
+        tone="danger"
+        onCancel={() => setDeleteTarget(null)}
+        onConfirm={() => {
+          if (deleteTarget) handleDeleteCover(deleteTarget.id, deleteTarget.title);
+          setDeleteTarget(null);
+        }}
+      />
     </AppShell>
   );
 }

@@ -1,6 +1,7 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
+import { collectRecordingTakeIds, deleteRecording } from "@/lib/recordings";
 import type { SavedProject } from "../components/studio/types";
 
 // ─── Saved Studio projects („Gotowe Numery” library) ──────────────────
@@ -30,7 +31,20 @@ export async function getProjects() {
   }).filter((p): p is NonNullable<typeof p> => p !== null);
 }
 
-export async function deleteProject(id: string) {
+export async function deleteProject(id: string, recordingsDirOverride?: string) {
+  // The project's takes may point at durable recordings (/api/recordings/<takeId>
+  // → file in uploads/ + Recording row). Studio's deleteTake already prunes a
+  // take's recording, but deleting the whole PROJECT would otherwise leave
+  // those files and rows behind forever — so collect every referenced take id
+  // from the payload and prune each one (best-effort: a missing/broken
+  // recording must never block the project deletion).
+  const row = await prisma.savedProject.findUnique({ where: { id } });
+  if (row) {
+    for (const takeId of collectRecordingTakeIds(row.data)) {
+      await deleteRecording(takeId, recordingsDirOverride).catch(() => {});
+    }
+  }
+  // Unknown id → the underlying delete throws P2025 exactly as before.
   return prisma.savedProject.delete({ where: { id } });
 }
 
@@ -79,7 +93,31 @@ export async function createBeat(data: {
       filePath: data.filePath,
       isStems: data.isStems || false,
       stemsData: data.stemsData ? JSON.stringify(data.stemsData) : null,
+      // Uploading a beat counts as using it — it lands in the recent list.
+      lastPlayedAt: new Date(),
     },
+  });
+}
+
+/** The most recently PLAYED beats (Beat.lastPlayedAt) — real history. */
+export async function getRecentlyPlayedBeats(limit = 5) {
+  return prisma.beat.findMany({
+    where: { lastPlayedAt: { not: null } },
+    orderBy: { lastPlayedAt: "desc" },
+    take: limit,
+  });
+}
+
+/** One beat by id — used by the Studio deep-link (?beatId=...). */
+export async function getBeatById(id: string) {
+  return prisma.beat.findUnique({ where: { id } });
+}
+
+/** Record that a beat was actually played/used (updates lastPlayedAt). */
+export async function recordBeatPlayed(id: string) {
+  return prisma.beat.update({
+    where: { id },
+    data: { lastPlayedAt: new Date() },
   });
 }
 
@@ -110,10 +148,10 @@ export async function getBeats(options?: {
 
 export async function updateBeat(id: string, data: {
   title?: string;
-  artist?: string;
+  artist?: string | null;
   bpm?: number;
-  key?: string;
-  genre?: string;
+  key?: string | null;
+  genre?: string | null;
   tags?: string[];
 }) {
   return prisma.beat.update({

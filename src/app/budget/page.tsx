@@ -34,13 +34,19 @@ interface Expense {
 }
 
 const CATEGORIES = [
-  { id: "beat_license", label: "Licencja na bit", icon: "🎵" },
-  { id: "mix_master", label: "Mix/Mastering", icon: "🎛️" },
-  { id: "cover_art", label: "Okładka", icon: "🎨" },
-  { id: "promo", label: "Promocja", icon: "📢" },
-  { id: "studio", label: "Sesja studyjna", icon: "🎙️" },
-  { id: "equipment", label: "Sprzęt", icon: "🎧" },
-  { id: "other", label: "Inne", icon: "📦" },
+  { id: "beat_license", label: "Licencja na bit", icon: "🎵", color: "bg-amber-500" },
+  { id: "mix_master", label: "Mix/Mastering", icon: "🎛️", color: "bg-blue-500" },
+  { id: "cover_art", label: "Okładka", icon: "🎨", color: "bg-pink-500" },
+  { id: "promo", label: "Promocja", icon: "📢", color: "bg-purple-500" },
+  { id: "studio", label: "Sesja studyjna", icon: "🎙️", color: "bg-red-500" },
+  { id: "equipment", label: "Sprzęt", icon: "🎧", color: "bg-cyan-500" },
+  { id: "other", label: "Inne", icon: "📦", color: "bg-zinc-500" },
+];
+
+// Distinct bar colors for the „Według Projektów” chart (cycled by size rank).
+const PROJECT_COLORS = [
+  "bg-emerald-500", "bg-violet-500", "bg-rose-500", "bg-teal-500",
+  "bg-indigo-500", "bg-lime-500", "bg-fuchsia-500", "bg-sky-500",
 ];
 
 export default function BudgetPage() {
@@ -88,6 +94,11 @@ export default function BudgetPage() {
       acc[e.project] = (acc[e.project] || 0) + e.amount;
       return acc;
     }, {} as Record<string, number>);
+
+  // Sorted largest → smallest for the „Według Projektów” chart.
+  const projectBreakdown = Object.entries(projectTotals)
+    .map(([name, total]) => ({ name, total }))
+    .sort((a, b) => b.total - a.total);
 
   const addExpense = useCallback(async () => {
     if (!newExpense.title || newExpense.amount <= 0) return;
@@ -261,32 +272,67 @@ export default function BudgetPage() {
             </button>
           </div>
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Category Breakdown */}
-            <div className="rounded-2xl bg-zinc-900/50 border border-zinc-800/50 p-6">
-              <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
-                <span>📊</span> Według Kategorii
-              </h3>
-              <div className="space-y-3">
-                {categoryTotals.map((cat) => {
-                  const percentage = totalSpent > 0 ? (cat.total / totalSpent) * 100 : 0;
-                  return (
-                    <div key={cat.id}>
-                      <div className="flex items-center justify-between text-sm mb-1">
-                        <span className="text-zinc-300">{cat.icon} {cat.label}</span>
-                        <span className="text-zinc-400 font-mono">{cat.total.toLocaleString()} PLN</span>
+          <div className="space-y-6">
+            {/* Charts row: categories + projects (both from the loaded expenses) */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              {/* Category Breakdown — per-category colored bars */}
+              <div className="rounded-2xl bg-zinc-900/50 border border-zinc-800/50 p-6">
+                <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                  <span>📊</span> Według Kategorii
+                </h3>
+                <div className="space-y-3">
+                  {categoryTotals.map((cat) => {
+                    const percentage = totalSpent > 0 ? (cat.total / totalSpent) * 100 : 0;
+                    return (
+                      <div key={cat.id}>
+                        <div className="flex items-center justify-between text-sm mb-1">
+                          <span className="text-zinc-300">{cat.icon} {cat.label}</span>
+                          <span className="text-zinc-400 font-mono">{cat.total.toLocaleString()} PLN</span>
+                        </div>
+                        <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                          <div className={`h-full rounded-full transition-all duration-500 ${cat.color}`} style={{ width: `${percentage}%` }} />
+                        </div>
                       </div>
-                      <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
-                        <div className="h-full bg-amber-500 rounded-full transition-all duration-500" style={{ width: `${percentage}%` }} />
-                      </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Project Breakdown — per-project colored bars (uses .project) */}
+              <div className="rounded-2xl bg-zinc-900/50 border border-zinc-800/50 p-6">
+                <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
+                  <span>📁</span> Według Projektów
+                </h3>
+                {projectBreakdown.length > 0 ? (
+                  <div className="space-y-3">
+                    {projectBreakdown.map((p, i) => {
+                      const percentage = totalSpent > 0 ? (p.total / totalSpent) * 100 : 0;
+                      return (
+                        <div key={p.name}>
+                          <div className="flex items-center justify-between text-sm mb-1">
+                            <span className="text-zinc-300 truncate">{p.name}</span>
+                            <span className="text-zinc-400 font-mono">{p.total.toLocaleString()} PLN</span>
+                          </div>
+                          <div className="h-2 rounded-full bg-zinc-800 overflow-hidden">
+                            <div
+                              className={`h-full rounded-full transition-all duration-500 ${PROJECT_COLORS[i % PROJECT_COLORS.length]}`}
+                              style={{ width: `${percentage}%` }}
+                            />
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <p className="text-xs text-zinc-500 text-center py-4">
+                    Żaden wydatek nie ma przypisanego projektu — dodaj nazwę w formularzu.
+                  </p>
+                )}
               </div>
             </div>
 
             {/* Expenses List */}
-            <div className="lg:col-span-2 rounded-2xl bg-zinc-900/50 border border-zinc-800/50 p-6">
+            <div className="rounded-2xl bg-zinc-900/50 border border-zinc-800/50 p-6">
               <h3 className="text-sm font-semibold text-white mb-4 flex items-center gap-2">
                 <span>📋</span> Lista Wydatków
               </h3>

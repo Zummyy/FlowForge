@@ -14,7 +14,12 @@ import { createDebouncedPersister, PERSIST_DEBOUNCE_MS } from "./debounce";
 import type { DebouncedPersister } from "./debounce";
 import type { SavedClipState } from "./types";
 
-/** A take that survived navigation — audio embedded as a data URL. */
+/**
+ * A take that survived navigation. Audio is referenced by server URL
+ * (`audioUrl` — uploaded to /api/recordings, durable + cross-browser);
+ * `dataUrl` is the legacy fallback for takes recorded before the upload API
+ * existed (or uploaded while offline), embedded as base64.
+ */
 export interface SerializedTake {
   id: string;
   label: string;
@@ -25,7 +30,10 @@ export interface SerializedTake {
   isSoloed: boolean;
   trimStart: number;
   trimEnd: number;
-  dataUrl: string;
+  /** Server URL of the uploaded recording — /api/recordings/<takeId>. */
+  audioUrl?: string;
+  /** Legacy embedded audio (pre-upload-API / offline fallback). */
+  dataUrl?: string;
 }
 
 export interface SerializedClips {
@@ -75,7 +83,12 @@ export function loadPersistedStudioState(): PersistedStudioState {
           : null,
       beatVolume: typeof p.beatVolume === "number" ? p.beatVolume : 0.7,
       takes: Array.isArray(p.takes)
-        ? p.takes.filter((t: unknown) => !!t && typeof (t as SerializedTake).dataUrl === "string")
+        ? p.takes.filter(
+            (t: unknown) =>
+              !!t &&
+              (typeof (t as SerializedTake).audioUrl === "string" ||
+                typeof (t as SerializedTake).dataUrl === "string")
+          )
         : [],
       clips: Array.isArray(p.clips) ? p.clips : [],
       teleprompter: { ...EMPTY_STUDIO_STATE.teleprompter, ...(p.teleprompter ?? {}) },

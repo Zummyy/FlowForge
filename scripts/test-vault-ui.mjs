@@ -2,33 +2,94 @@
 // ────────────────────────────────────────────────────────────────────────
 // Browser E2E verification of the The Vault tools (no npm dependencies):
 //
-//   • Rhyme markers  — mirror rendered, rhyme groups marked, markers track
+//   • Rhyme markers  — mirror rendered, rhyme groups highlight the exact
+//     rhyming WORD of each line with the „Analiza Wersów” group colors
+//     (1:1 by line, blank-line stanza breaks included), markers track
 //     textarea scrolling (dynamic, not static rectangles)
 //   • Metronome      — Web Audio lookahead scheduling: exact osc.start(t)
 //     spacing at 90/95 BPM, live tempo change, stop cancels all timers
+//   • Writer block   — categorized „Iskra” database (5 prompt types), „Losuj
+//     Klimat” auto-selects mood tags with a glow + rolls a context-aware
+//     spark (klimat templates/affinity), manual multi-select, insert both
+//   • Editor undo/redo — own history stack: typing bursts = one step,
+//     programmatic insertions (Iskra) = independent transactions;
+//     Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z restore exact pre-insertion state
 //   • Moodboard      — image upload, drag & drop reordering, persistence,
 //     DB sync (keyword lands in the board row) + restore from the DB after
 //     a localStorage wipe
 //   • Flow Meter     — syllable counts accurate (regression: stateful regex)
-//   • Release Plan   — milestones toggle/add, target date, persistence  //   • Dashboard      — streak, level bar, active-challenge tile (countdown,
-  //     submit flow), „Ostatnio Edytowane” empty state, recent-lyrics deep
-  //     links, live refresh reorder on the vault save event, /vault?track=<id>
-  //     deep-link navigation + unknown-id fallback, stats grid, budget tile,
-  //     „Ostatnio zapisane projekty” tile (DB-primary, live-refresh event)
+//   • Release Plan   — milestones toggle/add, target date, persistence//   • Dashboard      — streak, level bar, active-challenge tile (countdown,
+//     submit flow), „Ostatnio Edytowane” empty state, recent-lyrics deep
+//     links, live refresh reorder on the vault save event, /vault?track=<id>
+//     deep-link navigation + unknown-id fallback, stats grid, budget tile,
+//     „Ostatnio zapisane projekty” tile (DB-primary, live-refresh event),
+//     „Ostatnio Użyte Beat / Podkłady” mini-player (empty state, lists the
+//     seeded beat with play + 🎙️ Nagraj, ▶→⏸ play/pause via a stubbed
+//     Audio, playing records lastPlayedAt — real history, Nagraj deep-links
+//     to /studio?beatId=<id>)
 //   • Studio         — teleprompter (pick text, fullscreen scroll, pause,
 //     close) and clip timeline (select take, marker, split, undo/redo,
-//     reload persistence)
+//     reload persistence); the ?beatId= deep-link loads that exact beat
+//     (audio from filePath/stems, session persisted, lastPlayedAt recorded,
+//     unknown id falls back gracefully)
 //   • Save Project    — modal summary + custom name, project lands in the
 //     „Gotowe Numery” library and renders on /beats across reloads
 //   • Challenges      — DB-primary progress render (score/count/percent),
 //     auto-award of achievements, „Resetuj postęp” wipes DB + mirror + badges
 //   • Feed            — seeded post render, like toggle, 5★ rating, comment
-//     thread, publishing a new post (all DB-backed)  //   • Inspirations    — seeded cards (difficulty + tags), optimistic voting
+//     thread, publishing a new post (all DB-backed)
+//   • Inspirations    — seeded cards (difficulty + tags), optimistic voting
+//   • Cover            — generate + save cover, gallery from the DB across
+//     reloads, „Wczytaj” restores settings, delete removes the DB row
   //     with DB persistence, search + difficulty/tag filters, adding new rows
-  //   • Profile          — DB-primary edit (name/bio/avatar) with persistence
-  //     across reloads, level bar + stats grid + achievements from the DB
-  //   • Track Archive     — „📦 Archiwum” section in the Vault: hide a track
-  //     (status archived, editor switches away), restore, permanent delete
+//   • Profile          — DB-primary edit (name/bio/avatar) with persistence
+//     across reloads, level bar + stats grid + achievements from the DB;
+//     sidebar profile chip reads the same row (no hardcoded „MC FlowForge”)
+//     and refreshes via the „flowforge-profile-updated” event
+//   • Track Archive     — „📦 Archiwum” section in the Vault: hide a track
+//     (status archived, editor switches away), restore, permanent delete
+//   • Publish            — „📤 Publikuj utwór” (status published + isPublic),
+//     „✓ Opublikowany” badge, /feed?shared=<id> read-only card, „Cofnij”
+//   • Recordings        — durable Studio takes: POST /api/recordings (raw
+//     bytes → uploads/ file + Recording row), GET streams them back, upsert
+//     on re-upload, DELETE removes row + file, 404 afterwards; deleting a
+//     „Gotowe Numery” project on /beats prunes its takes' recordings (rows
+//     + files), so no .webm orphans survive a project delete
+//   • ExportLog          — real history source: „Eksporty” stat card on the
+//     dashboard (DB count), per-format badges + „🧹 Wyczyść historię” in the
+//     Vault history panel (row deletions land in the DB)
+//   • Budget             — /budget breakdown charts: summary cards (total /
+//     count / projects), „Według Kategorii” bars with per-category colors +
+//     widths, „Według Projektów” bars sorted desc with distinct colors
+//   • Stem mixer         — /beats stems beat (isStems + stemsData): 4
+//     channels render, ▶ starts all audios in sync, per-channel mute drops
+//     volume to 0 (🔇 + line-through) and back, ⏸ pauses everything
+//   • PWA                — manifest + real 192/512 icons (decode as PNG),
+//     service worker registers/activates/controls the page, offline reload
+//     renders the app shell from cache, back online restores normal loads
+//   • Sweep               — `sweep:recordings` on the isolated copy:
+//     orphaned file (no row) + broken row (no file) reported by --dry-run
+//     and removed by the real run, healthy row+file pair kept
+//   • Install prompt      — sidebar „⬇️ Zainstaluj aplikację”: hidden by
+//     default, appears on beforeinstallprompt, clicking invokes the stored
+//     prompt() (accepted hides it, dismissed keeps it), appinstalled removes it
+//   • Stem upload         — „Dodaj Numer” modal: stems tab attaches 4 real
+//     WAVs (drums/bass/melody/vocals) → card + „🎛️ Stemy” mixer render, DB
+//     row carries isStems + stemsData data URLs; single-beat tab still works
+//   • Academy             — /academy static articles: header + all 6 cards,
+//     difficulty badges + read time, expand/collapse accordion (single-open),
+//     category filters (Rymy/Flow/Technika/Twórczość) narrow the list and
+//     „Wszystkie” restores it
+//   • Edit beat           — ✏️ on a beat card: modal prefilled from the row,
+//     empty-title validation keeps it open, saving title/artist/BPM/key
+//     updates the card + DB row (unrelated fields untouched), persists
+//     across reload; the search box filters cards by title/artist
+//     („Brak wyników” empty state, clearing restores the grid)
+//   • Create cypher       — „+ Nowy Cypher” on /challenges: modal with
+//     title/description/prize/deadline, empty-title + past-deadline
+//     validation keeps it open, saving renders the card (countdown from the
+//     DB deadline, „Zgłoszenia • 0”), row created isActive, persists across
+//     reload
   //
 
 // The script starts its own Next.js dev server (or reuses one that is
@@ -65,7 +126,7 @@
 "use strict";
 
 import { spawn, spawnSync } from "node:child_process";
-import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdtempSync, readdirSync, rmSync, unlinkSync, writeFileSync } from "node:fs";
 import http from "node:http";
 import net from "node:net";
 import os from "node:os";
@@ -551,6 +612,16 @@ class CdpClient {
       return true;
     })()`);
   }
+  /** Attach a real on-disk file to an <input type=file> (value is read-only). */
+  async setFileInput(selector, filePath) {
+    const doc = await this.send("DOM.getDocument");
+    const rootNodeId = doc.result?.root?.nodeId;
+    if (!rootNodeId) return false;
+    const q = await this.send("DOM.querySelector", { nodeId: rootNodeId, selector });
+    if (!q.result?.nodeId) return false;
+    await this.send("DOM.setFileInputFiles", { nodeId: q.result.nodeId, files: [filePath] });
+    return true;
+  }
 }
 
 // ── Dashboard fixture & scenario ────────────────────────────────────
@@ -597,8 +668,16 @@ async function seedDashboardFixture() {
       createdAt: new Date(now - day),
     },
   });
+  // lastPlayedAt in the past → the beat still shows in the recent widget,
+  // and playing it in the mini-player must bump the timestamp (real history).
   await db.beat.create({
-    data: { title: "Testowy Bit", bpm: 90, duration: 120, filePath: "/test-beat-a.wav" },
+    data: {
+      title: "Testowy Bit",
+      bpm: 90,
+      duration: 120,
+      filePath: "/test-beat-a.wav",
+      lastPlayedAt: new Date(now - 2 * day),
+    },
   });
   // A current-month expense → the „Budżet w pigułce” tile (DB-primary).
   await db.budgetExpense.create({
@@ -659,6 +738,14 @@ async function scenarioDashboard(cdp, appUrl) {
   await prisma().beat.deleteMany({});
   await prisma().savedProject.deleteMany({});
   await prisma().budgetExpense.deleteMany({});
+  // Push the demo cyphers („Cypher: Moje Miasto” / „Bitwa Freestyle”) far
+  // into the future. Their endDate is fixed at db:seed time (+21d), so the
+  // fixture below (+20d from NOW) would otherwise lose the dashboard's
+  // „soonest deadline” pick once the seeded DB is more than ~1 day old.
+  await prisma().challenge.updateMany({
+    where: { id: { in: ["cypher-miasto", "cypher-bitwa"] } },
+    data: { endDate: new Date(Date.now() + 90 * 24 * 60 * 60 * 1000) },
+  });
   await cdp.goto(root, `document.body.textContent.includes('Szybki Dostęp')`);
   await sleep(700);
   const emptyState = await cdp.evaluate(`(() => {
@@ -685,6 +772,16 @@ async function scenarioDashboard(cdp, appUrl) {
   check(emptyState.projEmpty === true, "projects empty state „Brak zapisanych projektów” with an empty table");
   check(emptyState.projCta === true, "„🎙️ Otwórz Studio” CTA in the projects empty state");
 
+  // The „Ostatnio Użyte Beat / Podkłady” mini-player widget shows an empty
+  // state while the Beat table is empty.
+  const beatsEmpty = await cdp.evaluate(`(() => ({
+    found: [...document.querySelectorAll('h2')].some(h => h.textContent.includes('Ostatnio Użyte Beat / Podkłady')),
+    empty: document.body.textContent.includes('Brak historii odtwarzania'),
+    rows: document.querySelectorAll('[data-beat-row]').length,
+  }))()`);
+  check(beatsEmpty.found === true, "„Ostatnio Użyte Beat / Podkłady” widget present");
+  check(beatsEmpty.empty === true && beatsEmpty.rows === 0, "beat widget empty state with an empty table");
+
   // ── Phase 2: seeded fixture → full dashboard ──
   const fixture = await seedDashboardFixture();
   try {
@@ -698,8 +795,20 @@ async function scenarioDashboard(cdp, appUrl) {
       localStorage.setItem('flowforge-versions', JSON.stringify(fake));
       return true;
     })()`);
+    // One export log → the „📤 Eksporty” stat card (ExportLog is the source).
+    await prisma().exportLog.create({ data: { lyricId: fixture.lyric.id, format: "txt" } });
     // The dashboard has no textarea — wait for the challenge tile instead.
     await cdp.goto(root, `document.body.textContent.includes('Aktywne wyzwanie')`);
+
+    // ── „📤 Eksporty” stat card — reads the ExportLog table ──
+    const exportCard = await cdp.evaluate(`(() => {
+      const cards = [...document.querySelectorAll('div')].filter(d => d.className.includes('rounded-2xl'));
+      const card = cards.find(c => c.textContent.includes('Eksporty'));
+      const val = card ? card.querySelector('p.text-2xl')?.textContent : null;
+      return { found: !!card, val };
+    })()`);
+    check(exportCard.found === true && exportCard.val === "1", `„📤 Eksporty” card reads the ExportLog count (got ${exportCard.val})`);
+    await prisma().exportLog.deleteMany({ where: { lyricId: fixture.lyric.id } });
 
     // ── Streak card ──
     const streak = await cdp.evaluate(`(() => {
@@ -949,6 +1058,129 @@ async function scenarioDashboard(cdp, appUrl) {
     })()`);
     check(fb.len >= 0, "unknown track id falls back (editor still renders)");
     check(fb.title === "Testowy Wers", `unknown id falls back to the remembered track (CURRENT_KEY) (got ${fb.title})`);
+
+    // ── Writing activity chart: LyricVersion day buckets ──
+    // 3 versions TODAY (100+50+50 = 200 syllables) + the fixture's version
+    // yesterday (0 syllables) + one 20 days ago (60 syllables). The 7-day
+    // window sees 2 days/200 sylab; the 30-day window adds the old one.
+    const now = Date.now();
+    const day = 24 * 60 * 60 * 1000;
+    await prisma().lyricVersion.createMany({
+      data: [
+        { lyricId: fixture.lyric.id, content: "wers a", snapshot: 11, syllableCount: 100, createdAt: new Date(now - 3600e3) },
+        { lyricId: fixture.lyric.id, content: "wers b", snapshot: 12, syllableCount: 50, createdAt: new Date(now - 1800e3) },
+        { lyricId: fixture.lyric.id, content: "wers c", snapshot: 13, syllableCount: 50, createdAt: new Date(now) },
+        { lyricId: fixture.lyric.id, content: "wers stary", snapshot: 14, syllableCount: 60, createdAt: new Date(now - 20 * day) },
+      ],
+    });
+    await cdp.goto(root, `document.body.textContent.includes('Aktywność pisania')`);
+    await sleep(600);
+    const activity7 = await cdp.evaluate(`(() => {
+      const card = [...document.querySelectorAll('div')].filter(d => d.className.includes('rounded-2xl'))
+        .find(c => c.textContent.includes('Aktywność pisania'));
+      if (!card) return null;
+      const bars = [...card.querySelectorAll('div[title]')];
+      const todayBar = bars.find(b => (b.getAttribute('title') || '').includes('200 sylab'));
+      return {
+        subtitle: card.textContent.includes('200 sylab') && card.textContent.includes('2 dni z pisaniem'),
+        raw: [...card.querySelectorAll('p')].map((p) => p.textContent).join(' | '),
+        barCount: bars.length,
+        today: todayBar ? todayBar.getAttribute('title') : null,
+        pressed: card.querySelector('button[aria-pressed="true"]')?.textContent,
+      };
+    })()`);
+    check(activity7 !== null, "„Aktywność pisania” tile rendered");
+    check(activity7.subtitle === true, `tile totals „200 sylab • 2 dni z pisaniem” (raw: ${activity7.raw})`);
+    check(activity7.barCount === 7, `7 day bars by default (got ${activity7.barCount})`);
+    check(activity7.today && activity7.today.includes('3 wersji'), `today's bar tooltip „200 sylab, 3 wersji” (got ${activity7.today})`);
+    check(activity7.pressed === "7 dni", "range toggle defaults to 7 dni");
+
+    // Toggle to 30 days → 30 bars; the yesterday version adds a second day.
+    check(await cdp.clickText("30 dni"), "switched the chart to 30 days");
+    await sleep(500);
+    const activity30 = await cdp.evaluate(`(() => {
+      const card = [...document.querySelectorAll('div')].filter(d => d.className.includes('rounded-2xl'))
+        .find(c => c.textContent.includes('Aktywność pisania'));
+      if (!card) return null;
+      return {
+        barCount: card.querySelectorAll('div[title]').length,
+        subtitle: card.textContent.includes('260 sylab') && card.textContent.includes('3 dni z pisaniem'),
+        pressed: card.querySelector('button[aria-pressed="true"]')?.textContent,
+      };
+    })()`);
+    check(activity30.barCount === 30, `30 day bars after toggle (got ${activity30.barCount})`);
+    check(activity30.subtitle === true, "30-day window adds the 20-days-ago version („260 sylab • 3 dni z pisaniem”)");
+    check(activity30.pressed === "30 dni", "range toggle now on 30 dni");
+
+    // ── Recent Beats mini-player: the seeded „Testowy Bit” plays/pauses ──
+    const testBeat = await prisma().beat.findFirst({ where: { title: "Testowy Bit" } });
+    check(testBeat !== null, "fixture beat exists for the widget");
+    // Deterministic playback: capture Audio instances + play/pause calls.
+    await cdp.evaluate(`(() => {
+      window.__dashAudios = [];
+      window.__dashPlays = [];
+      window.__dashPauses = [];
+      const OrigAudio = window.Audio;
+      window.Audio = class extends OrigAudio {
+        constructor(src) { super(src); window.__dashAudios.push(src); }
+      };
+      HTMLMediaElement.prototype.play = function () { window.__dashPlays.push(this.src); return Promise.resolve(); };
+      HTMLMediaElement.prototype.pause = function () { window.__dashPauses.push(this.src); };
+      return true;
+    })()`);
+    const widget = await cdp.evaluate(`(() => {
+      const row = document.querySelector('[data-beat-row="${testBeat.id}"]');
+      const link = row ? row.querySelector('[data-studio-link="${testBeat.id}"]') : null;
+      return row ? {
+        title: row.textContent.includes('Testowy Bit'),
+        meta: row.textContent.includes('90 BPM'),
+        play: !!row.querySelector('[data-beat-play="${testBeat.id}"]'),
+        nagraj: row.textContent.includes('Nagraj'),
+        studioHref: link ? link.getAttribute('href') : null,
+      } : null;
+    })()`);
+    check(
+      !!widget && widget.title && widget.meta && widget.play && widget.nagraj,
+      "widget lists „Testowy Bit” with play button + 🎙️ Nagraj link"
+    );
+    check(
+      widget.studioHref === `/studio?beatId=${testBeat.id}`,
+      `„Nagraj” deep-links to /studio?beatId= (got ${widget.studioHref})`
+    );
+    await cdp.evaluate(`document.querySelector('[data-beat-play="${testBeat.id}"]').click()`);
+    await sleep(300);
+    const playing = await cdp.evaluate(`(() => {
+      const row = document.querySelector('[data-beat-row="${testBeat.id}"]');
+      const btn = row ? row.querySelector('[data-beat-play="${testBeat.id}"]') : null;
+      return {
+        isPause: btn ? btn.textContent.includes('⏸') : false,
+        audios: window.__dashAudios.length,
+        played: window.__dashPlays.length,
+        src: window.__dashAudios[0] ?? null,
+      };
+    })()`);
+    check(playing.isPause === true, "▶ flips to ⏸ while playing");
+    check(
+      playing.audios === 1 && playing.played === 1 && playing.src === "/test-beat-a.wav",
+      "one Audio created with the beat's filePath and played"
+    );
+    // Playing must bump lastPlayedAt (fire-and-forget server action) — the
+    // widget is driven by real usage history, not creation dates.
+    let bumped = false;
+    for (let i = 0; i < 20 && !bumped; i++) {
+      const row = await prisma().beat.findFirst({ where: { title: "Testowy Bit" } });
+      bumped = !!row?.lastPlayedAt && row.lastPlayedAt.getTime() > Date.now() - 60000;
+      if (!bumped) await sleep(300);
+    }
+    check(bumped, "playing the beat records lastPlayedAt in the DB");
+    await cdp.evaluate(`document.querySelector('[data-beat-play="${testBeat.id}"]').click()`);
+    await sleep(200);
+    const paused = await cdp.evaluate(`(() => {
+      const row = document.querySelector('[data-beat-row="${testBeat.id}"]');
+      const btn = row ? row.querySelector('[data-beat-play="${testBeat.id}"]') : null;
+      return { isPlay: btn ? btn.textContent.includes('▶') : false, paused: window.__dashPauses.length };
+    })()`);
+    check(paused.isPlay === true && paused.paused >= 1, "second click pauses and ▶ returns");
   } finally {
     await cleanupDashboardFixture();
   }
@@ -1149,6 +1381,72 @@ async function scenarioStudio(cdp, appUrl) {
   check(reloaded.take && reloaded.beat, "after reload: take + beat restored from the persisted session");
   check(reloaded.tpText === true, "after reload: teleprompter text restored");
 
+  // ── Deep-link: /studio?beatId=<id> loads that exact beat ──
+  const dlBeat = await prisma().beat.create({
+    data: {
+      id: "e2e-deeplink-beat",
+      title: "Deep Link Bit",
+      artist: "FlowForge",
+      bpm: 95,
+      key: "Em",
+      genre: "Demo",
+      duration: 8,
+      filePath: "/test-beat-b.wav",
+    },
+  });
+  try {
+    // Deterministic playback: stub Audio BEFORE navigating — the deep-link
+    // builds the element during the page's mount, so the stub must be
+    // injected into the new document.
+    await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+      source: `(() => {
+        window.__dlAudios = [];
+        const OrigAudio = window.Audio;
+        window.Audio = class extends OrigAudio {
+          constructor(src) { super(src); window.__dlAudios.push(src); }
+        };
+        HTMLMediaElement.prototype.play = function () { return Promise.resolve(); };
+        HTMLMediaElement.prototype.pause = function () {};
+        return true;
+      })();`,
+    });
+    await cdp.goto(root + "/studio?beatId=e2e-deeplink-beat", `document.body.textContent.includes('Deep Link Bit')`);
+    await sleep(1200);
+    // The LAST Audio is the deep-linked beat — the mount restore creates
+    // one for the persisted session's beat first („Bit testowy” data URL).
+    const deepLink = await cdp.evaluate(`(() => ({
+      name: document.body.textContent.includes('Deep Link Bit'),
+      audio: window.__dlAudios[window.__dlAudios.length - 1] ?? null,
+      session: (localStorage.getItem('flowforge-studio-live') || '').includes('Deep Link Bit'),
+    }))()`);
+    check(deepLink.name === true, "studio shows the deep-linked beat name");
+    check(
+      deepLink.audio === "/test-beat-b.wav",
+      `beat audio created from the row's filePath (got ${deepLink.audio})`
+    );
+    check(deepLink.session === true, "deep-linked beat persisted into the studio session");
+    // The deep-link also records real usage (lastPlayedAt) for the widget.
+    let dlRecorded = false;
+    for (let i = 0; i < 20 && !dlRecorded; i++) {
+      const row = await prisma().beat.findUnique({ where: { id: "e2e-deeplink-beat" } });
+      dlRecorded = !!row?.lastPlayedAt && row.lastPlayedAt.getTime() > Date.now() - 60000;
+      if (!dlRecorded) await sleep(300);
+    }
+    check(dlRecorded, "deep-link records lastPlayedAt for the recent-beats history");
+
+    // Unknown id → graceful fallback (editor still renders, no beat). The
+    // persisted session is cleared first so the restore can't mask it.
+    await cdp.evaluate(`localStorage.removeItem('flowforge-studio-live'); true`);
+    await cdp.goto(root + "/studio?beatId=nieistniejacy-beat", `document.body.textContent.includes('Teleprompter Setup')`);
+    await sleep(800);
+    check(
+      await cdp.evaluate(`document.body.textContent.includes('Deep Link Bit') === false`),
+      "unknown beatId falls back without loading a beat"
+    );
+  } finally {
+    await prisma().beat.deleteMany({ where: { id: "e2e-deeplink-beat" } });
+  }
+
   // Cleanup the seeded localStorage so later scenarios start fresh.
   await cdp.evaluate(`localStorage.removeItem('flowforge-studio-live'); localStorage.removeItem('flowforge-versions'); true`);
 }
@@ -1342,8 +1640,42 @@ async function scenarioChallenges(cdp, appUrl) {
     create: { id: "default", content: JSON.stringify(seeded) },
   });
 
+  // Fixture for cypher voting: one submission this voter already voted on
+  // (voters JSON = DB-primary dedup), one open to vote.
+  await prisma().challenge.create({
+    data: {
+      id: "e2e-vote-cypher",
+      title: "E2E Cypher Głosowania",
+      description: "Zgłoś zwrotkę i zagłosuj na najlepszą.",
+      endDate: new Date(Date.now() + 30 * 86400000),
+      isActive: true,
+    },
+  });
+  await prisma().challengeSubmission.create({
+    data: {
+      id: "e2e-vote-sub-open",
+      challengeId: "e2e-vote-cypher",
+      authorName: "MC Test",
+      title: "Zwrotka testowa",
+      content: "linijka",
+      voteCount: 3,
+      voters: JSON.stringify(["voter-other"]),
+    },
+  });
+  await prisma().challengeSubmission.create({
+    data: {
+      id: "e2e-vote-sub-done",
+      challengeId: "e2e-vote-cypher",
+      authorName: "MC Stary",
+      title: "Stara zwrotka",
+      content: "linijka",
+      voteCount: 1,
+      voters: JSON.stringify(["voter-e2e"]),
+    },
+  });
+
   await cdp.goto(root + "/vault", `!!document.querySelector('textarea')`);
-  await cdp.evaluate(`localStorage.clear(); true`);
+  await cdp.evaluate(`localStorage.clear(); localStorage.setItem('flowforge-voter-id', 'voter-e2e'); true`);
   await cdp.goto(root + "/challenges", `document.body.textContent.includes('Jak zdobywać punkty?')`);
 
   // ── Rendered score + progress ──
@@ -1410,6 +1742,79 @@ async function scenarioChallenges(cdp, appUrl) {
   check(cyphers.sub === true, "top submission listed: „Raper X” with ▲ 3");
   check(cyphers.emptyBitwa === true, "„Bitwa Freestyle” shows the empty-state „Bądź pierwszy!”");
 
+  // ── Cypher voting: ▲ button → DB vote → lock, dedup, persistence ──
+  const voteUi = await cdp.evaluate(`(() => {
+    const open = document.querySelector('[data-vote-btn="e2e-vote-sub-open"]');
+    const done = document.querySelector('[data-vote-btn="e2e-vote-sub-done"]');
+    const txt = (b) => b.textContent.replace(/\\s+/g, ' ').trim();
+    return {
+      open: open ? { voted: open.getAttribute('data-voted') === 'true', disabled: open.disabled, text: txt(open) } : null,
+      done: done ? { voted: done.getAttribute('data-voted') === 'true', disabled: done.disabled, text: txt(done) } : null,
+    };
+  })()`);
+  check(voteUi.open !== null && voteUi.done !== null, "both fixture submissions render vote buttons");
+  check(
+    voteUi.open && voteUi.open.voted === false && voteUi.open.disabled === false && voteUi.open.text === "▲ 3",
+    `open submission shows an enabled „▲ 3” button (got ${voteUi.open && voteUi.open.text})`
+  );
+  check(
+    voteUi.done && voteUi.done.voted === true && voteUi.done.disabled === true && voteUi.done.text.includes("✓"),
+    "already-voted submission is locked with ✓"
+  );
+
+  // Click vote → the DB count moves 3 → 4 and the voter id is recorded.
+  check(
+    await cdp.evaluate(`(() => {
+      const btn = document.querySelector('[data-vote-btn="e2e-vote-sub-open"]');
+      if (!btn) return false;
+      btn.click();
+      return true;
+    })()`),
+    "clicked ▲ on the open submission"
+  );
+  await sleep(500);
+  // Regression guard: the page renders ToastView — without it, vote/create
+  // toasts would silently never appear (found missing on /challenges).
+  check(
+    await cdp.evaluate(`document.body.textContent.includes('Oddano głos')`),
+    "vote toast „▲ Oddano głos…” rendered (ToastView present)"
+  );
+  const votedRow = await prisma().challengeSubmission.findUnique({ where: { id: "e2e-vote-sub-open" } });
+  check(votedRow !== null && votedRow.voteCount === 4, `vote persisted: count 3 → 4 (got ${votedRow?.voteCount})`);
+  check(
+    votedRow !== null && typeof votedRow.voters === "string" && votedRow.voters.includes("voter-e2e"),
+    "voters JSON records the browser's voter id"
+  );
+  const voteLocked = await cdp.evaluate(`(() => {
+    const btn = document.querySelector('[data-vote-btn="e2e-vote-sub-open"]');
+    return btn
+      ? { voted: btn.getAttribute('data-voted') === 'true', disabled: btn.disabled, text: btn.textContent.replace(/\\s+/g, ' ').trim() }
+      : null;
+  })()`);
+  check(
+    voteLocked && voteLocked.voted === true && voteLocked.disabled === true && voteLocked.text.includes("4"),
+    `button locks after voting and shows the new count (got ${voteLocked && voteLocked.text})`
+  );
+
+  // A second click is a no-op — the DB count must not move.
+  await cdp.evaluate(`document.querySelector('[data-vote-btn="e2e-vote-sub-open"]').click()`);
+  await sleep(300);
+  const still4 = await prisma().challengeSubmission.findUnique({ where: { id: "e2e-vote-sub-open" }, select: { voteCount: true } });
+  check(still4?.voteCount === 4, "double-click cannot inflate the count (still 4)");
+
+  // Reload → the voters column locks the button again from the DB.
+  await cdp.send("Page.reload");
+  await cdp.waitFor(`document.body.textContent.includes('Jak zdobywać punkty?')`, 30000);
+  await sleep(1200);
+  const voteAfterReload = await cdp.evaluate(`(() => {
+    const btn = document.querySelector('[data-vote-btn="e2e-vote-sub-open"]');
+    return btn ? { voted: btn.getAttribute('data-voted') === 'true', disabled: btn.disabled } : null;
+  })()`);
+  check(
+    voteAfterReload && voteAfterReload.voted === true && voteAfterReload.disabled === true,
+    "after reload the vote stays locked (voters read from the DB)"
+  );
+
   // ── Auto-award: syncToDb creates the achievement + profile points ──
   // Poll until the award lands (the server action is fire-and-forget).
   let award = null;
@@ -1465,7 +1870,9 @@ async function scenarioChallenges(cdp, appUrl) {
   );
 
   // Cleanup: restore the pristine profile (reset may have left totalPoints 0
-  // via awardPoints' recompute; deleteAchievement already removed the row).
+  // via awardPoints' recompute; deleteAchievement already removed the row)
+  // and drop the voting fixture (cascade removes its submissions).
+  await prisma().challenge.deleteMany({ where: { id: "e2e-vote-cypher" } });
   await prisma().userProfile.deleteMany({ where: { id: "default" } });
 }
 
@@ -1911,6 +2318,61 @@ async function scenarioVersionsArchive(cdp, appUrl) {
     check(atCap.newest === true, "newest active version visible (seed-50)");
     check(atCap.oldestActive === true, "seed-1 still in the active list before the save");
 
+    // ── Version diff: „🔍 Porównaj” — two selects + colored line rows ──
+    check(await cdp.clickText("Porównaj"), "opened the compare mode");
+    await sleep(400);
+    const diffOpen = await cdp.evaluate(`(() => {
+      const body = document.body.textContent;
+      return {
+        selects: document.querySelectorAll('select').length,
+        stats: body.includes('% podobieństwa'),
+        base: body.includes('Wersja bazowa'),
+      };
+    })()`);
+    check(diffOpen.selects >= 2, "compare mode renders two version selectors");
+    check(diffOpen.base === true, "base selector labeled „Wersja bazowa (starsza)”");
+    check(diffOpen.stats === true, "diff stats line rendered („% podobieństwa”)");
+
+    // Pick seed-1 (base) vs seed-2 (compare) — one line each, fully different.
+    const seedIds = await prisma().lyricVersion.findMany({
+      where: { lyricId: lyric.id, label: { in: ["seed-1", "seed-2"] } },
+    });
+    const seed1 = seedIds.find((v) => v.label === "seed-1");
+    const seed2 = seedIds.find((v) => v.label === "seed-2");
+    await cdp.evaluate(`(() => {
+      const selects = [...document.querySelectorAll('select')];
+      const setVal = (sel, val) => {
+        const setter = Object.getOwnPropertyDescriptor(window.HTMLSelectElement.prototype, 'value').set;
+        setter.call(sel, val);
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+      };
+      setVal(selects[0], '${seed1.id}');
+      setVal(selects[1], '${seed2.id}');
+    })()`);
+    await sleep(400);
+    const diffRows = await cdp.evaluate(`(() => {
+      const container = document.querySelector('div[class*="max-h-[320px]"]');
+      const rows = container ? [...container.children] : [];
+      return {
+        count: rows.length,
+        texts: rows.map((r) => r.textContent.trim()),
+        classes: rows.map((r) => r.className),
+      };
+    })()`);
+    check(diffRows.count === 2, `diff shows 2 rows for two one-line versions (got ${diffRows.count})`);
+    check(diffRows.texts.some((t) => t.includes("wers 1")), "removed line „wers 1” rendered");
+    check(diffRows.texts.some((t) => t.includes("wers 2")), "added line „wers 2” rendered");
+    check(
+      diffRows.classes[0].includes("red") && diffRows.classes[1].includes("emerald"),
+      "removed row styled red / added row styled green"
+    );
+    const diffStatsTxt = await cdp.evaluate(
+      `document.body.textContent.includes('+1 −1 • 0 wspólnych')`
+    );
+    check(diffStatsTxt === true, "stats read „+1 −1 • 0 wspólnych” for fully different one-liners");
+    check(await cdp.clickText("Porównaj"), "closed the compare mode");
+    await sleep(300);
+
     // Back to the editor and save the 51st version through the UI.
     check(await cdp.clickText("Edytor"), "back to the editor tab");
     await sleep(400);
@@ -2138,6 +2600,31 @@ async function scenarioCoverArt(cdp, appUrl) {
     })()`),
     "clicked „🗑️” on the saved cover"
   );
+  // The destructive action needs a confirm — first cancel keeps the row.
+  await sleep(300);
+  check(await cdp.evaluate(`!!document.querySelector('[data-confirm]')`), "delete confirm dialog appears");
+  await cdp.evaluate(`document.querySelector('[data-cancel]').click()`);
+  await sleep(300);
+  check(
+    await cdp.evaluate(`(() => {
+      const card = [...document.querySelectorAll('div')].find(d => d.className.includes('card-hover') && d.textContent.includes('Testowa Okładka'));
+      return !!card && !document.querySelector('[data-confirm]');
+    })()`),
+    "cancelling keeps the cover + closes the dialog"
+  );
+  check(
+    await cdp.evaluate(`(() => {
+      const card = [...document.querySelectorAll('div')].find(d => d.className.includes('card-hover') && d.textContent.includes('Testowa Okładka'));
+      if (!card) return false;
+      const b = [...card.querySelectorAll('button')].find(x => x.textContent.includes('🗑️'));
+      if (!b) return false;
+      b.click();
+      return true;
+    })()`),
+    "clicked „🗑️” again"
+  );
+  await sleep(300);
+  await cdp.evaluate(`document.querySelector('[data-confirm]').click()`);
   let removed = false;
   for (let i = 0; i < 20 && !removed; i++) {
     removed = await cdp.evaluate(`(() => {
@@ -2220,6 +2707,19 @@ async function scenarioProfile(cdp, appUrl) {
   check(initial.points === "240", `„Punkty” stat = 240 (got ${initial.points})`);
   check(initial.badges === "1", `„Odznaki” stat = 1 (got ${initial.badges})`);
 
+  // ── Sidebar profile chip — DB-primary (same source as this page) ──
+  // The old footer was hardcoded „MC FlowForge · Poziom 1 • 0 pkt”; now it
+  // reads displayName/avatar/level/points from the userProfile row.
+  const chipBefore = await cdp.evaluate(`(() => {
+    const chip = document.querySelector('[data-profile-chip]');
+    return chip ? chip.textContent : null;
+  })()`);
+  check(
+    !!chipBefore && chipBefore.includes("MC") && chipBefore.includes("Poziom 3") && chipBefore.includes("240 pkt") && chipBefore.includes("🎤"),
+    `sidebar chip shows the seeded profile (got ${chipBefore})`
+  );
+  check(!!chipBefore && !chipBefore.includes("MC FlowForge"), "hardcoded „MC FlowForge” is gone");
+
   // ── Edit the profile through the UI ──
   check(await cdp.clickText("✏️"), "opened the profile editor (✏️)");
   await cdp.waitFor(`!!document.querySelector('input[placeholder*="Nazwa wyświetlana"]')`, 10000);
@@ -2258,6 +2758,18 @@ async function scenarioProfile(cdp, appUrl) {
   check(!!saved && saved.name === true, "page shows the new display name");
   check(!!saved && saved.bio === true, "page shows the new bio");
 
+  // The sidebar chip must refresh through the „flowforge-profile-updated”
+  // event (fired by the save) — no reload involved.
+  let chipRefreshed = false;
+  for (let i = 0; i < 20 && !chipRefreshed; i++) {
+    chipRefreshed = await cdp.evaluate(`(() => {
+      const chip = document.querySelector('[data-profile-chip]');
+      return chip ? chip.textContent.includes('E2E MC') && chip.textContent.includes('🎧') : false;
+    })()`);
+    if (!chipRefreshed) await sleep(300);
+  }
+  check(chipRefreshed === true, "sidebar chip refreshes to „E2E MC • 🎧” right after the save (event)");
+
   // ── Reload: profile + achievements must come back from the DB ──
   await cdp.send("Page.reload");
   await cdp.waitFor(`document.body.textContent.includes('240 / 300 pkt')`, 30000);
@@ -2275,6 +2787,14 @@ async function scenarioProfile(cdp, appUrl) {
   check(afterReload.bio === true, "after reload the bio persists");
   check(afterReload.avatar === true, "after reload the avatar emoji persists");
   check(afterReload.badge === true, "after reload the achievement still renders");
+  const chipAfterReload = await cdp.evaluate(`(() => {
+    const chip = document.querySelector('[data-profile-chip]');
+    return chip ? chip.textContent : null;
+  })()`);
+  check(
+    !!chipAfterReload && chipAfterReload.includes("E2E MC") && chipAfterReload.includes("🎧"),
+    `sidebar chip persists across reload (got ${chipAfterReload})`
+  );
 
   // Cleanup: restore the pre-test state (no profile row + no test badge).
   await prisma().userAchievement.deleteMany({ where: { badgeId: "e2e-test-badge" } });
@@ -2338,6 +2858,55 @@ async function scenarioTrackArchive(cdp, appUrl) {
     (await cdp.evaluate(`document.body.textContent.includes('Archiwum (0)')`)) === true,
     "archive badge shows (0)"
   );
+
+  // ── Publish flow: 📤 → status published + isPublic → /feed?shared=<id> ──
+  check(await clickRowAction("Publikuj utwór", "Utwór B"), "clicked „📤 Publikuj utwór” on „Utwór B”");
+  let pubRow = null;
+  for (let i = 0; i < 20 && !pubRow; i++) {
+    const row = await prisma().lyric.findUnique({ where: { id: b.id } });
+    if (row && row.status === "published" && row.isPublic === true) pubRow = row;
+    else await sleep(500);
+  }
+  check(pubRow !== null, "DB: status flips to \"published\" + isPublic=true");
+  await sleep(400);
+  const pubBadge = await panelText();
+  check(pubBadge.includes("✓ Opublikowany"), "row shows the „✓ Opublikowany” badge");
+  check(pubBadge.includes("Utwór A"), "the other track stays in the list (no accidental publish)");
+
+  // The share link (/feed?shared=<id>) renders the published lyric read-only.
+  await cdp.goto(root + `/feed?shared=${b.id}`, `document.body.textContent.includes('Opublikowany utwór')`);
+  await sleep(500);
+  const shared = await cdp.evaluate(`(() => {
+    const cards = [...document.querySelectorAll('div')].filter(d => d.className.includes('rounded-2xl'));
+    const card = cards.find(c => c.textContent.includes('Opublikowany utwór'));
+    return card ? {
+      title: card.textContent.includes('Utwór B'),
+      content: card.textContent.includes('wers b'),
+      stats: card.textContent.includes('1 wersów') && card.textContent.includes('opublikowano'),
+      close: [...card.querySelectorAll('button')].some(x => x.textContent.includes('Zamknij')),
+    } : null;
+  })()`);
+  check(shared !== null, "/feed?shared=<id> renders the „Opublikowany utwór” card");
+  check(shared.title === true, "shared card shows the track title");
+  check(shared.content === true, "shared card shows the lyric content");
+  check(shared.stats === true, "shared card shows stats + publish date");
+  check(shared.close === true, "shared card has a „✕ Zamknij” button");
+
+  // Back in the Vault: ✓ → Cofnij publikację reverts to draft + private.
+  await cdp.goto(root + "/vault", `!!document.querySelector('textarea')`);
+  await cdp.waitFor(`document.body.textContent.includes('✓ Opublikowany')`, 30000);
+  await sleep(600);
+  check(await clickRowAction("Cofnij publikację", "Utwór B"), "clicked „✓ Cofnij publikację” on „Utwór B”");
+  let unPubRow = null;
+  for (let i = 0; i < 20 && !unPubRow; i++) {
+    const row = await prisma().lyric.findUnique({ where: { id: b.id } });
+    if (row && row.status === "draft" && row.isPublic === false) unPubRow = row;
+    else await sleep(500);
+  }
+  check(unPubRow !== null, "DB: status back to \"draft\" + isPublic=false");
+  await sleep(400);
+  const unPubPanel = await panelText();
+  check(!unPubPanel.includes("✓ Opublikowany"), "the „✓ Opublikowany” badge disappears after unpublish");
 
   // ── Open „Utwór A”, then archive it from its row ──
   await cdp.evaluate(`(() => {
@@ -2451,6 +3020,1478 @@ async function scenarioTrackArchive(cdp, appUrl) {
   await prisma().lyric.deleteMany({});
 }
 
+async function scenarioRecordings(cdp, url) {
+  console.log("\n== 16. Recordings — durable Studio takes (upload → file+DB → GET → delete) ==");
+  const root = new URL(url).origin + "/";
+  const recDir = path.join(ROOT, "uploads", "recordings");
+
+  // Self-healing start: sweep leftovers from any crashed previous run.
+  const sweep = () => {
+    try {
+      for (const f of readdirSync(recDir)) {
+        if (f.startsWith("e2e-take-")) unlinkSync(path.join(recDir, f));
+      }
+    } catch {
+      /* dir may not exist yet — fine */
+    }
+  };
+  sweep();
+  await prisma().recording.deleteMany({ where: { takeId: { startsWith: "e2e-take-" } } });
+
+  await cdp.goto(root + "/studio", `document.body.textContent.includes('Studio')`);
+  await sleep(400);
+
+  const takeId = `e2e-take-${Date.now()}`;
+  const payload = "fake-webm-opus-bytes-for-e2e";
+  try {
+    // 1. Upload — raw bytes + x-take-id → API URL.
+    const up = await cdp.evaluate(`(async () => {
+      const res = await fetch('/api/recordings', {
+        method: 'POST',
+        headers: { 'x-take-id': '${takeId}', 'content-type': 'audio/webm' },
+        body: new Blob(['${payload}'], { type: 'audio/webm' }),
+      });
+      return { status: res.status, json: await res.json().catch(() => null) };
+    })()`);
+    check(up.status === 200, `upload returns 200 (got ${up.status})`);
+    check(up.json && up.json.url === `/api/recordings/${takeId}`, "upload returns the /api/recordings/<takeId> URL");
+
+    // 2. DB row + on-disk file (the suite's Node process shares the project root).
+    const row = await prisma().recording.findUnique({ where: { takeId } });
+    check(row !== null && row.mimeType === "audio/webm", "Recording row upserted (takeId → file)");
+    check(existsSync(path.join(recDir, `${takeId}.webm`)), "audio file written under uploads/recordings/");
+
+    // 3. GET streams the exact bytes back.
+    const got = await cdp.evaluate(`(async () => {
+      const res = await fetch('/api/recordings/${takeId}');
+      const buf = await res.arrayBuffer();
+      return { status: res.status, size: buf.byteLength, text: new TextDecoder().decode(buf) };
+    })()`);
+    check(got.status === 200 && got.text === payload, `GET streams the exact uploaded bytes back (${got.size} B)`);
+
+    // 4. Re-upload the same take — upsert keeps a single row.
+    await cdp.evaluate(`(async () => {
+      await fetch('/api/recordings', {
+        method: 'POST',
+        headers: { 'x-take-id': '${takeId}', 'content-type': 'audio/webm' },
+        body: new Blob(['${payload}-v2'], { type: 'audio/webm' }),
+      });
+    })()`);
+    await sleep(300);
+    const count = await prisma().recording.count({ where: { takeId } });
+    check(count === 1, "re-uploading the same take keeps a single row (upsert)");
+
+    // 5. DELETE removes row + file; GET → 404.
+    const del = await cdp.evaluate(`(async () => {
+      const res = await fetch('/api/recordings', { method: 'DELETE', headers: { 'x-take-id': '${takeId}' } });
+      return { status: res.status, json: await res.json().catch(() => null) };
+    })()`);
+    check(del.status === 200 && del.json && del.json.removed === true, "DELETE removes the recording");
+    check((await prisma().recording.findUnique({ where: { takeId } })) === null, "Recording row deleted from the DB");
+    check(!existsSync(path.join(recDir, `${takeId}.webm`)), "audio file removed from disk");
+    const gone = await cdp.evaluate(`(async () => (await fetch('/api/recordings/${takeId}')).status)()`);
+    check(gone === 404, "GET after delete returns 404");
+
+    // 6. Validation — a missing take id is rejected.
+    const noHeader = await cdp.evaluate(`(async () =>
+      (await fetch('/api/recordings', { method: 'POST', body: new Blob(['x']) })).status
+    )()`);
+    check(noHeader === 400, "POST without x-take-id is rejected (400)");
+
+    // 7. Deleting a PROJECT („Gotowe Numery” on /beats) prunes the recordings
+    // its takes reference — the fix for orphaned .webm files + rows that
+    // deleteTake could never reach. Upload two takes, save a project that
+    // points at them, delete it through the UI, expect row + file gone.
+    const projTakeA = `e2e-take-${Date.now()}-a`;
+    const projTakeB = `e2e-take-${Date.now()}-b`;
+    await cdp.evaluate(`(async () => {
+      await fetch('/api/recordings', { method: 'POST', headers: { 'x-take-id': '${projTakeA}', 'content-type': 'audio/webm' }, body: new Blob(['proj-a'], { type: 'audio/webm' }) });
+      await fetch('/api/recordings', { method: 'POST', headers: { 'x-take-id': '${projTakeB}', 'content-type': 'audio/webm' }, body: new Blob(['proj-b'], { type: 'audio/webm' }) });
+    })()`);
+    await sleep(300);
+    check(
+      (await prisma().recording.count({ where: { takeId: { in: [projTakeA, projTakeB] } } })) === 2,
+      "two recordings exist before the project delete"
+    );
+    const projRow = await prisma().savedProject.create({
+      data: {
+        title: "E2E Projekt z nagraniami",
+        data: JSON.stringify({
+          kind: "project",
+          id: "proj-e2e-rec-cleanup",
+          title: "E2E Projekt z nagraniami",
+          artist: "Studio",
+          genre: "rap",
+          duration: "2:00",
+          beatName: "Bit",
+          beatVolume: 0.8,
+          teleprompterText: "",
+          teleprompterSpeed: 5,
+          takes: [
+            { id: "t1", label: "Wokal 1", duration: 8, offset: 0, volume: 1, isMuted: false, isSoloed: false, trimStart: 0, trimEnd: 1, audioUrl: `/api/recordings/${projTakeA}` },
+            { id: "t2", label: "Wokal 2", duration: 8, offset: 0, volume: 1, isMuted: false, isSoloed: false, trimStart: 0, trimEnd: 1, audioUrl: `/api/recordings/${projTakeB}` },
+          ],
+          clips: [],
+          savedAt: new Date().toISOString(),
+        }),
+      },
+    });
+    await cdp.goto(root + "/beats", `document.body.textContent.includes('Gotowe Numery')`);
+    await sleep(1200);
+    const cardFound = await cdp.evaluate(`(() => {
+      const card = [...document.querySelectorAll('div.rounded-2xl')].find(c => c.textContent.includes('E2E Projekt z nagraniami'));
+      if (!card) return false;
+      const del = [...card.querySelectorAll('button')].find(b => b.textContent.includes('🗑️'));
+      if (!del) return false;
+      del.click();
+      return true;
+    })()`);
+    check(cardFound, "project card renders on /beats with a delete button");
+    // Deleting a project also prunes its takes' recordings — the confirm
+    // dialog must be acknowledged (and the warning mentions the recordings).
+    await sleep(300);
+    check(await cdp.evaluate(`!!document.querySelector('[data-confirm]')`), "delete confirm dialog appears for the project");
+    check(
+      await cdp.evaluate(`document.body.textContent.includes("Nagrania take'ów")`),
+      "dialog warns the takes' recordings will be removed"
+    );
+    await cdp.evaluate(`document.querySelector('[data-confirm]').click()`);
+    await sleep(400);
+    // The server action runs async — poll for the row to disappear.
+    let projectGone = false;
+    for (let i = 0; i < 20 && !projectGone; i++) {
+      projectGone = (await prisma().savedProject.findUnique({ where: { id: projRow.id } })) === null;
+      if (!projectGone) await sleep(300);
+    }
+    check(projectGone, "deleteProject removes the project row from the DB");
+    check(
+      (await prisma().recording.count({ where: { takeId: { in: [projTakeA, projTakeB] } } })) === 0,
+      "the project's Recording rows are pruned with it"
+    );
+    check(
+      !existsSync(path.join(recDir, `${projTakeA}.webm`)) && !existsSync(path.join(recDir, `${projTakeB}.webm`)),
+      "the takes' audio files are removed from disk"
+    );
+    const cardGone = await cdp.evaluate(
+      `![...document.querySelectorAll('div.rounded-2xl')].some(c => c.textContent.includes('E2E Projekt z nagraniami'))`
+    );
+    check(cardGone, "project card disappears from the library");
+  } finally {
+    // Cleanup: row + file for this take (and any e2e leftovers).
+    await prisma().savedProject.deleteMany({ where: { title: "E2E Projekt z nagraniami" } }).catch(() => {});
+    await prisma().recording.deleteMany({ where: { takeId: { startsWith: "e2e-take-" } } }).catch(() => {});
+    sweep();
+  }
+}
+
+// ── Budget scenario (category + project breakdown charts) ─────────────
+// Seeds 3 deterministic expenses (2 projects, 3 categories) directly into
+// the isolated DB, then verifies the /budget page renders the summary
+// cards (total/count/projects), the „Według Kategorii” chart with
+// per-category bar colors + widths, and the „Według Projektów” chart
+// (sorted desc, distinct colors by rank). Cleanup removes only the
+// seeded rows — the rest of the DB is untouched.
+async function scenarioBudget(cdp, appUrl) {
+  console.log("\n== 17. Budget — category + project breakdown charts ==");
+  const root = new URL(appUrl).origin + "/";
+
+  const fixture = [
+    { category: "beat_license", title: "Licencja na bit", amount: 150, project: "EP 2026" },
+    { category: "mix_master", title: "Mix", amount: 100, project: "EP 2026" },
+    { category: "cover_art", title: "Okładka", amount: 50, project: "Singiel X" },
+  ];
+  const titles = fixture.map((f) => f.title);
+  try {
+    // Deterministic start: remove any leftovers, then seed the fixture.
+    await prisma().budgetExpense.deleteMany({ where: { title: { in: titles } } });
+    for (const f of fixture) {
+      await prisma().budgetExpense.create({
+        data: { ...f, currency: "PLN", date: new Date() },
+      });
+    }
+
+    await cdp.goto(root + "/budget", `document.body.textContent.includes('Budżet Projektu')`);
+    await sleep(1200); // server action round-trip + re-render
+
+    // Summary cards: total / count / projects.
+    const cards = await cdp.evaluate(`(() => {
+      const grid = [...document.querySelectorAll('div.grid')].find(g => g.textContent.includes('Łączne wydatki'));
+      return grid ? grid.textContent : '';
+    })()`);
+    check(cards.includes("Łączne wydatki") && cards.includes("300"), "summary card: total 300 PLN across all expenses");
+    check(cards.includes("Wydatków") && cards.includes("3"), "summary card: 3 expenses");
+    check(cards.includes("Projektów") && cards.includes("2"), "summary card: 2 projects");
+
+    // Both charts: labels, totals, bar colors and widths.
+    const charts = await cdp.evaluate(`(() => {
+      const grab = (headingText) => {
+        const h = [...document.querySelectorAll('h3')].find(x => x.textContent.includes(headingText));
+        if (!h) return null;
+        const wrap = h.closest('div');
+        const bars = [...wrap.querySelectorAll('div[class*="h-full"]')].map(b => {
+          const style = b.getAttribute('style') || '';
+          return {
+            color: (b.className.match(/bg-[a-z]+-[0-9]+/) || [])[0] || null,
+            width: parseFloat((style.match(/width: ([0-9.]+)%/) || [])[1] || "0"),
+          };
+        });
+        return { text: wrap.textContent, bars };
+      };
+      return { cat: grab('Według Kategorii'), proj: grab('Według Projektów') };
+    })()`);
+
+    // Category chart: 3 bars, per-category colors, widths proportional.
+    check(!!charts.cat && charts.cat.bars.length === 3, "„Według Kategorii” renders 3 bars (beat/mix/cover)");
+    check(
+      charts.cat.text.includes("Licencja na bit") && charts.cat.text.includes("Mix/Mastering") && charts.cat.text.includes("Okładka"),
+      "category chart labels all three categories"
+    );
+    check(
+      charts.cat.bars[0].color === "bg-amber-500" && charts.cat.bars[1].color === "bg-blue-500" && charts.cat.bars[2].color === "bg-pink-500",
+      `category bars use per-category colors (got ${charts.cat.bars.map((b) => b.color).join(", ")})`
+    );
+    check(
+      Math.abs(charts.cat.bars[0].width - 50) < 1 && Math.abs(charts.cat.bars[1].width - 33.33) < 1 && Math.abs(charts.cat.bars[2].width - 16.67) < 1,
+      `category bar widths proportional to totals (got ${charts.cat.bars.map((b) => b.width).join(", ")})`
+    );
+
+    // Project chart: 2 bars, largest first, distinct colors.
+    check(!!charts.proj && charts.proj.bars.length === 2, "„Według Projektów” renders 2 bars (EP 2026 + Singiel X)");
+    check(
+      charts.proj.text.indexOf("EP 2026") < charts.proj.text.indexOf("Singiel X"),
+      "projects sorted by total, largest first (EP 2026 250 PLN before Singiel X 50 PLN)"
+    );
+    check(
+      charts.proj.text.includes("250") && charts.proj.text.includes("50"),
+      "project chart shows per-project totals (250 + 50 PLN)"
+    );
+    check(
+      charts.proj.bars[0].color === "bg-emerald-500" && charts.proj.bars[1].color === "bg-violet-500",
+      `project bars use distinct colors by rank (got ${charts.proj.bars.map((b) => b.color).join(", ")})`
+    );
+  } finally {
+    // Cleanup: remove only the seeded rows.
+    await prisma().budgetExpense.deleteMany({ where: { title: { in: titles } } });
+  }
+}
+
+// ── Stem mixer scenario (per-channel mute on /beats) ──────────────────
+// Upserts a stems beat (isStems + stemsData → the real generated files)
+// into the isolated DB, stubs HTMLMediaElement so playback is deterministic
+// in headless Chrome, then verifies the mixer UI: 4 channels render, ▶
+// starts all four audios in sync, muting a channel drops its volume to 0
+// (🔇 + line-through) and back to 1, and ⏸ pauses everything.
+async function scenarioStemMixer(cdp, appUrl) {
+  console.log("\n== 18. Beats — stem mixer (per-channel mute) ==");
+  const root = new URL(appUrl).origin + "/";
+
+  const fixture = {
+    id: "e2e-stems-beat",
+    title: "E2E Stem Mix",
+    artist: "FlowForge",
+    bpm: 92,
+    key: "Dm",
+    genre: "Boom Bap",
+    duration: 8,
+    filePath: "/test-beat-a.wav",
+    isStems: true,
+    stemsData: JSON.stringify({
+      drums: "/stems/miejski-rytm-drums.wav",
+      bass: "/stems/miejski-rytm-bass.wav",
+      melody: "/stems/miejski-rytm-melody.wav",
+      vocals: "/stems/miejski-rytm-vocals.wav",
+    }),
+  };
+  try {
+    const { id, ...rest } = fixture;
+    await prisma().beat.upsert({ where: { id }, update: { ...rest }, create: { ...fixture } });
+
+    await cdp.goto(root + "/beats", `document.body.textContent.includes('Gotowe Numery')`);
+    await sleep(1200); // server action round-trip + re-render
+
+    // Deterministic playback: collect Audio instances + count play/pause.
+    await cdp.evaluate(`(() => {
+      window.__audios = [];
+      window.__plays = [];
+      window.__pauses = [];
+      const OrigAudio = window.Audio;
+      window.Audio = class extends OrigAudio {
+        constructor(src) { super(src); window.__audios.push(this); }
+      };
+      HTMLMediaElement.prototype.play = function () { window.__plays.push(this.src); return Promise.resolve(); };
+      HTMLMediaElement.prototype.pause = function () { window.__pauses.push(this.src); };
+      return true;
+    })()`);
+
+    const card = await cdp.evaluate(`(() => {
+      const mixer = document.querySelector('[data-stem-mixer="e2e-stems-beat"]');
+      if (!mixer) return null;
+      const cardEl = mixer.closest('div.rounded-2xl');
+      return {
+        found: true,
+        text: cardEl.textContent,
+        channels: [...mixer.querySelectorAll('[data-stem-channel]')].map(b => b.textContent),
+        hasPlay: [...cardEl.querySelectorAll('button')].some(b => b.textContent.includes('▶')),
+      };
+    })()`);
+    check(!!card && card.found, "stems beat card renders with the mixer");
+    check(card.text.includes("🎛️ Stemy"), "„🎛️ Stemy” chip shown on the stems beat");
+    check(card.channels.length === 4, `mixer renders 4 channels (got ${card.channels.length})`);
+    check(
+      card.channels.join(" ").includes("Drums") &&
+        card.channels.join(" ").includes("Bass") &&
+        card.channels.join(" ").includes("Melody") &&
+        card.channels.join(" ").includes("Wokal"),
+      "channel labels: Drums / Bass / Melody / Wokal"
+    );
+    check(card.hasPlay === true, "play button present on the stems beat");
+
+    // Equalizer bars must be DETERMINISTIC — the old Math.random() recomputed
+    // heights on every render, so they jumped on any state change. Capture
+    // the heights now and again after the play toggle: they must be identical.
+    const barsBefore = await cdp.evaluate(`(() => {
+      const mixer = document.querySelector('[data-stem-mixer="e2e-stems-beat"]');
+      const cardEl = mixer.closest('div.rounded-2xl');
+      return [...cardEl.querySelectorAll('[class*="w-1.5"]')].map(el => parseFloat(el.style.height) || 0);
+    })()`);
+    check(barsBefore.length === 20 && barsBefore.every((h) => h > 0), `equalizer renders 20 bars with heights (got ${barsBefore.length})`);
+
+    // ── Play: all four channels start in sync ──
+    check(
+      await cdp.evaluate(`(() => {
+        const mixer = document.querySelector('[data-stem-mixer="e2e-stems-beat"]');
+        const cardEl = mixer.closest('div.rounded-2xl');
+        const btn = [...cardEl.querySelectorAll('button')].find(b => b.textContent.includes('▶'));
+        if (!btn) return false;
+        btn.click();
+        return true;
+      })()`),
+      "clicked ▶ on the stems beat"
+    );
+    await sleep(300);
+    const barsAfter = await cdp.evaluate(`(() => {
+      const mixer = document.querySelector('[data-stem-mixer="e2e-stems-beat"]');
+      const cardEl = mixer.closest('div.rounded-2xl');
+      return [...cardEl.querySelectorAll('[class*="w-1.5"]')].map(el => parseFloat(el.style.height) || 0);
+    })()`);
+    check(
+      JSON.stringify(barsBefore) === JSON.stringify(barsAfter),
+      "bar heights are stable across the play toggle (no Math.random jumps)"
+    );
+    const playInfo = await cdp.evaluate(`(() => {
+      const srcs = window.__plays;
+      const audios = window.__audios;
+      return {
+        playCount: srcs.length,
+        channels: ["drums", "bass", "melody", "vocals"].map(c => audios.some(a => a.src.includes(c))),
+        volumes: ["drums", "bass", "melody", "vocals"].map(c => {
+          const a = audios.find(x => x.src.includes(c));
+          return a ? a.volume : null;
+        }),
+      };
+    })()`);
+    check(playInfo.playCount === 4, `play started all 4 stem audios (got ${playInfo.playCount})`);
+    check(playInfo.channels.every(Boolean), "one audio per channel (drums/bass/melody/vocals)");
+    check(playInfo.volumes.every((v) => v === 1), "all channels start at volume 1");
+
+    // ── Mute drums: volume 0 + visual feedback ──
+    check(
+      await cdp.evaluate(`(() => {
+        const btn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-channel="drums"]');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      })()`),
+      "clicked the drums channel (mute)"
+    );
+    await sleep(200);
+    const muted = await cdp.evaluate(`(() => {
+      const btn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-channel="drums"]');
+      const a = window.__audios.find(x => x.src.includes('drums'));
+      const label = btn.querySelector('span:nth-child(2)');
+      const bass = window.__audios.find(x => x.src.includes('bass'));
+      return {
+        volume: a ? a.volume : null,
+        icon: btn.textContent.includes('🔇'),
+        strike: label ? label.classList.contains('line-through') : false,
+        bassVolume: bass ? bass.volume : null,
+      };
+    })()`);
+    check(muted.volume === 0, "drums audio volume dropped to 0 (muted)");
+    check(muted.icon === true, "drums channel shows 🔇");
+    check(muted.strike === true, "drums label gets the line-through style");
+    check(muted.bassVolume === 1, "other channels keep volume 1");
+
+    // ── Unmute drums: volume back to 1 ──
+    await cdp.evaluate(`document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-channel="drums"]').click()`);
+    await sleep(200);
+    const unmuted = await cdp.evaluate(`(() => {
+      const btn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-channel="drums"]');
+      const a = window.__audios.find(x => x.src.includes('drums'));
+      return { volume: a ? a.volume : null, icon: btn.textContent.includes('🔊') };
+    })()`);
+    check(unmuted.volume === 1, "drums volume restored to 1 (unmuted)");
+    check(unmuted.icon === true, "drums channel shows 🔊 again");
+
+    // ── Solo drums: only drums audible, the rest drop to 0 ──
+    check(
+      await cdp.evaluate(`(() => {
+        const btn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo="drums"]');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      })()`),
+      "clicked the drums solo button"
+    );
+    await sleep(200);
+    const soloDrums = await cdp.evaluate(`(() => {
+      const audios = window.__audios;
+      const vol = (c) => { const a = audios.find(x => x.src.includes(c)); return a ? a.volume : null; };
+      const soloBtn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo="drums"]');
+      const bassBtn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-channel="bass"]');
+      return {
+        drums: vol('drums'),
+        bass: vol('bass'),
+        melody: vol('melody'),
+        vocals: vol('vocals'),
+        soloActive: soloBtn.getAttribute('data-stem-solo-active') === 'true',
+        bassShowsMuted: bassBtn.textContent.includes('🔇'),
+        clearVisible: !!document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo-clear]'),
+      };
+    })()`);
+    check(soloDrums.drums === 1, "soloed drums stays at volume 1");
+    check(
+      soloDrums.bass === 0 && soloDrums.melody === 0 && soloDrums.vocals === 0,
+      "solo silences the other three channels (volume 0)"
+    );
+    check(soloDrums.soloActive === true, "drums solo button shows the active state");
+    check(soloDrums.bassShowsMuted === true, "non-soloed channels show 🔇");
+    check(soloDrums.clearVisible === true, "„✕ Wyłącz solo” chip appears while solo is active");
+
+    // ── Solo another channel: solo switches to it ──
+    await cdp.evaluate(`document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo="bass"]').click()`);
+    await sleep(200);
+    const soloSwitch = await cdp.evaluate(`(() => {
+      const audios = window.__audios;
+      const vol = (c) => { const a = audios.find(x => x.src.includes(c)); return a ? a.volume : null; };
+      const drumsBtn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo="drums"]');
+      const bassBtn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo="bass"]');
+      return {
+        drums: vol('drums'),
+        bass: vol('bass'),
+        drumsSoloed: drumsBtn.getAttribute('data-stem-solo-active') === 'true',
+        bassSoloed: bassBtn.getAttribute('data-stem-solo-active') === 'true',
+      };
+    })()`);
+    check(soloSwitch.bass === 1 && soloSwitch.drums === 0, "solo switches to the newly clicked channel");
+    check(
+      soloSwitch.bassSoloed === true && soloSwitch.drumsSoloed === false,
+      "solo button active state follows the switch"
+    );
+
+    // ── Clear solo: every channel back to its explicit mute state (all 1) ──
+    check(
+      await cdp.evaluate(`(() => {
+        const btn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo-clear]');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      })()`),
+      "clicked „✕ Wyłącz solo”"
+    );
+    await sleep(200);
+    const soloCleared = await cdp.evaluate(`(() => {
+      const audios = window.__audios;
+      const vol = (c) => { const a = audios.find(x => x.src.includes(c)); return a ? a.volume : null; };
+      return {
+        drums: vol('drums'),
+        bass: vol('bass'),
+        melody: vol('melody'),
+        vocals: vol('vocals'),
+        clearGone: !document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo-clear]'),
+      };
+    })()`);
+    check(
+      soloCleared.drums === 1 && soloCleared.bass === 1 && soloCleared.melody === 1 && soloCleared.vocals === 1,
+      "„Wyłącz solo” restores all channels to volume 1"
+    );
+    check(soloCleared.clearGone === true, "„✕ Wyłącz solo” chip disappears");
+
+    // ── Stop: all channels pause, UI back to ▶ ──
+    check(
+      await cdp.evaluate(`(() => {
+        const mixer = document.querySelector('[data-stem-mixer="e2e-stems-beat"]');
+        const cardEl = mixer.closest('div.rounded-2xl');
+        const btn = [...cardEl.querySelectorAll('button')].find(b => b.textContent.includes('⏸'));
+        if (!btn) return false;
+        btn.click();
+        return true;
+      })()`),
+      "clicked ⏸ on the stems beat"
+    );
+    await sleep(300);
+    const stopped = await cdp.evaluate(`(() => {
+      const mixer = document.querySelector('[data-stem-mixer="e2e-stems-beat"]');
+      const cardEl = mixer.closest('div.rounded-2xl');
+      const btn = [...cardEl.querySelectorAll('button')].find(b => b.textContent.includes('▶'));
+      const stemPauses = window.__pauses.filter(s => s.includes('/stems/'));
+      return { backToPlay: !!btn, stemPauses: stemPauses.length };
+    })()`);
+    check(stopped.backToPlay === true, "play button back to ▶ after stop");
+    check(stopped.stemPauses === 4, `stop paused all 4 stem audios (got ${stopped.stemPauses})`);
+
+    // ── Export mix: record the current mute/solo settings to one file ──
+    // Stub the Web Audio graph + MediaRecorder (headless = no audio device):
+    // the component must build 4 gains honoring mute/solo, feed the recorder
+    // from the mixed destination stream, and download a real blob on stop.
+    await cdp.evaluate(`(() => {
+      window.__rec = { gains: [], instances: 0, stops: 0, started: false, resumed: false, closed: false, blobs: [], anchors: [] };
+      const rec = window.__rec;
+      window.AudioContext = class {
+        constructor() { rec.ctxCreated = true; }
+        suspend() { return Promise.resolve(); }
+        resume() { rec.resumed = true; return Promise.resolve(); }
+        close() { rec.closed = true; return Promise.resolve(); }
+        createMediaStreamDestination() { return { stream: { __mix: true } }; }
+        createGain() { const g = { gain: { value: 1 }, connect() {} }; rec.gains.push(g); return g; }
+        createMediaElementSource() { return { connect() {} }; }
+      };
+      window.MediaRecorder = class {
+        static isTypeSupported() { return true; }
+        constructor(stream, opts) {
+          rec.streamFake = stream.__mix === true;
+          rec.mime = opts ? opts.mimeType : null;
+          rec.instances += 1;
+        }
+        start() { rec.started = true; }
+        stop() {
+          rec.stops += 1;
+          if (this.ondataavailable) this.ondataavailable({ data: new Blob([new Uint8Array(128)], { type: "audio/webm" }) });
+          if (this.onstop) this.onstop();
+        }
+      };
+      const origCreate = URL.createObjectURL.bind(URL);
+      window.URL.createObjectURL = (blob) => { rec.blobs.push({ type: blob.type, size: blob.size }); return "blob:fake-mix"; };
+      window.URL.revokeObjectURL = () => {};
+      const origClick = HTMLAnchorElement.prototype.click;
+      HTMLAnchorElement.prototype.click = function () {
+        if (this.download) rec.anchors.push(this.download);
+        return origClick.call(this);
+      };
+      return true;
+    })()`);
+    // Solo bass first — the recorded gains must reflect the mixer state.
+    await cdp.evaluate(`document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-solo="bass"]').click()`);
+    await sleep(150);
+    check(
+      await cdp.evaluate(`(() => {
+        const btn = document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-record]');
+        if (!btn) return false;
+        btn.click();
+        return true;
+      })()`),
+      "clicked „🎙️ Nagraj miks”"
+    );
+    await sleep(250);
+    const recState = await cdp.evaluate(`(() => {
+      const mixer = document.querySelector('[data-stem-mixer="e2e-stems-beat"]');
+      const playBtn = [...mixer.closest('div.rounded-2xl').querySelectorAll('button')].find(b => b.textContent.includes('▶'));
+      return {
+        rec: window.__rec,
+        stopShown: !!mixer.querySelector('[data-stem-record-stop]'),
+        timer: mixer.querySelector('[data-stem-record-timer]')?.textContent ?? null,
+        playDisabled: playBtn ? playBtn.disabled === true : null,
+      };
+    })()`);
+    check(recState.rec.instances === 1, "MediaRecorder constructed once for the mix");
+    check(recState.rec.started === true && recState.rec.resumed === true, "recorder started + AudioContext resumed");
+    check(recState.rec.streamFake === true, "recorder feeds from the mixed destination stream");
+    check(recState.rec.gains.length === 4, `one gain node per channel (got ${recState.rec.gains.length})`);
+    const gains = recState.rec.gains.map((g) => g.gain.value);
+    check(
+      gains[1] === 1 && gains[0] === 0 && gains[2] === 0 && gains[3] === 0,
+      "gain per channel matches the solo state (only bass audible)"
+    );
+    check(recState.stopShown === true, "„⏹ Zatrzymaj i pobierz” replaces the record button while recording");
+    check(recState.playDisabled === true, "play button disabled while recording");
+    check(recState.timer !== null && /^\d+s$/.test(recState.timer), "recording timer chip rendered");
+
+    // Stop → download the mix with a title-derived filename, UI back to start.
+    await cdp.evaluate(`document.querySelector('[data-stem-mixer="e2e-stems-beat"] [data-stem-record-stop]').click()`);
+    await sleep(250);
+    const recDone = await cdp.evaluate(`(() => {
+      const mixer = document.querySelector('[data-stem-mixer="e2e-stems-beat"]');
+      return {
+        rec: window.__rec,
+        recordBtnBack: !!mixer.querySelector('[data-stem-record]'),
+        stopGone: !mixer.querySelector('[data-stem-record-stop]'),
+      };
+    })()`);
+    check(recDone.rec.stops === 1, "recorder.stop() called exactly once");
+    check(recDone.rec.blobs.length === 1, "a mix blob was created for download");
+    check(
+      recDone.rec.blobs[0] &&
+        recDone.rec.blobs[0].type === "audio/webm" &&
+        recDone.rec.blobs[0].size === 128,
+      "downloaded blob is the recorded webm (non-empty)"
+    );
+    check(
+      recDone.rec.anchors.length === 1 && recDone.rec.anchors[0] === "miks-e2e-stem-mix.webm",
+      `download filename derived from the beat title (got ${recDone.rec.anchors[0] ?? "none"})`
+    );
+    check(recDone.recordBtnBack === true && recDone.stopGone === true, "UI back to „🎙️ Nagraj miks” after stop");
+    check(recDone.rec.closed === true, "AudioContext closed after the recording");
+  } finally {
+    await prisma().beat.deleteMany({ where: { id: fixture.id } });
+  }
+}
+
+// ── PWA scenario (manifest, icons, service worker offline) ────────────
+// Verifies installability prerequisites (manifest with 192+512 icons that
+// really decode as PNG) and the offline story: the service worker registers,
+// activates and controls the page, and after CDP cuts the network a reload
+// still renders the app shell from cache (sidebar „FlowForge” brand). The
+// client-side localStorage mirrors then do the rest — the whole point of
+// the DB-primary + mirror architecture.
+async function scenarioPwa(cdp, appUrl) {
+  console.log("\n== 19. PWA — manifest, icons, service worker offline ==");
+  const root = new URL(appUrl).origin + "/";
+
+  // ── 1. Manifest + icons: the installability prerequisites ──
+  const manifest = await (await fetch(root + "manifest.json")).json();
+  check(!!manifest.name && manifest.name.includes("FlowForge"), "manifest served with the app name");
+  check(
+    manifest.icons.some((i) => i.sizes === "192x192") && manifest.icons.some((i) => i.sizes === "512x512"),
+    "manifest declares 192 + 512 icons (installable)"
+  );
+  const icon192 = await fetch(root + "icon-192.png");
+  const icon512 = await fetch(root + "icon-512.png");
+  check(icon192.status === 200 && (icon192.headers.get("content-type") || "").includes("image/png"), "icon-192.png served as PNG");
+  check(icon512.status === 200 && (icon512.headers.get("content-type") || "").includes("image/png"), "icon-512.png served as PNG");
+  check((await icon192.arrayBuffer()).byteLength > 3000, "icon-192.png is a real image (not an empty stub)");
+
+  await cdp.goto(root + "/vault", `document.body.textContent.includes('The Vault') || document.body.textContent.includes('FlowForge')`);
+  await sleep(500);
+
+  // Icons must also DECODE as PNG in the browser (manifest parse-proof).
+  const decodes = await cdp.evaluate(`(async () => {
+    const ok = async (path) => {
+      try {
+        const blob = await (await fetch(path)).blob();
+        const bmp = await createImageBitmap(blob);
+        return bmp.width > 0;
+      } catch { return false; }
+    };
+    return { i192: await ok('/icon-192.png'), i512: await ok('/icon-512.png') };
+  })()`);
+  check(decodes.i192 === true && decodes.i512 === true, "both icons decode as PNG images in the browser");
+
+  // ── 2. Service worker registers, activates, controls the page ──
+  const reg = await cdp.evaluate(`(async () => {
+    if (!('serviceWorker' in navigator)) return { supported: false };
+    const registration = await navigator.serviceWorker.register('/sw.js');
+    await navigator.serviceWorker.ready; // resolves once active
+    return {
+      supported: true,
+      scope: registration.scope,
+      active: !!registration.active,
+    };
+  })()`);
+  check(reg.supported === true, "serviceWorker API available in the browser");
+  check(reg.active === true, "service worker registered and activated");
+
+  // A reload under the active SW: every fetch (HTML + chunks) now goes
+  // through the worker and lands in its caches.
+  await cdp.send("Page.reload");
+  await cdp.waitFor(`document.body.textContent.includes('FlowForge')`, 30000);
+  await sleep(800);
+  check(
+    (await cdp.evaluate(`!!navigator.serviceWorker.controller`)) === true,
+    "page is controlled by the service worker after reload"
+  );
+
+  // ── 3. Offline: reload must render the app shell from cache ──
+  await cdp.send("Network.enable");
+  await cdp.send("Network.emulateNetworkConditions", {
+    offline: true,
+    latency: 0,
+    downloadThroughput: 0,
+    uploadThroughput: 0,
+  });
+  await cdp.send("Page.reload");
+  let offlineLoaded = false;
+  try {
+    await cdp.waitFor(
+      `document.body.textContent.includes('FlowForge') && !!document.querySelector('aside, nav')`,
+      30000
+    );
+    offlineLoaded = true;
+  } catch {
+    /* timed out — nothing rendered offline */
+  }
+  check(offlineLoaded, "offline reload renders the app shell from the service worker cache");
+
+  // Restore connectivity and confirm the page works normally again.
+  await cdp.send("Network.emulateNetworkConditions", {
+    offline: false,
+    latency: 0,
+    downloadThroughput: -1,
+    uploadThroughput: -1,
+  });
+  await cdp.send("Page.reload");
+  await cdp.waitFor(`document.body.textContent.includes('FlowForge')`, 30000);
+  await sleep(500);
+  check(
+    await cdp.evaluate(`document.body.textContent.includes('The Vault') || document.body.textContent.includes('FlowForge')`),
+    "page loads normally once back online"
+  );
+}
+
+// ── Sweep scenario (orphaned recordings cleanup script) ──────────────
+// Exercises `npm run sweep:recordings` against the isolated DB copy with
+// three fixtures: an orphaned FILE with no Recording row, a BROKEN row whose
+// file is missing from disk, and a healthy row+file pair that must survive.
+// Verifies --dry-run reports but deletes nothing, then the real run removes
+// exactly the orphans. Files live in the real uploads/recordings/ (like
+// scenario 16) and are swept in the finally block.
+async function scenarioSweepRecordings(cdp, appUrl) {
+  console.log("\n== 20. sweep:recordings — orphaned file/row cleanup ==");
+  const recDir = path.join(ROOT, "uploads", "recordings");
+  const sweepScript = path.join(ROOT, "scripts", "sweep-recordings.mjs");
+  const orphanFile = "e2e-sweep-orphan.webm";
+  const brokenTake = "e2e-sweep-broken";
+  const keepTake = "e2e-sweep-keep";
+
+  // Self-healing start: clear leftovers from any crashed previous run.
+  const sweepFiles = () => {
+    try {
+      for (const f of readdirSync(recDir)) {
+        if (f.startsWith("e2e-sweep-")) unlinkSync(path.join(recDir, f));
+      }
+    } catch {
+      /* dir may not exist yet — fine */
+    }
+  };
+  sweepFiles();
+  await prisma().recording.deleteMany({ where: { takeId: { startsWith: "e2e-sweep-" } } });
+
+  // Run the real script in a child process — it inherits DATABASE_URL from
+  // the suite, so it operates on the isolated copy, never prisma/dev.db.
+  const runSweep = (dryRun) => {
+    const r = spawnSync(process.execPath, [sweepScript, ...(dryRun ? ["--dry-run"] : [])], {
+      cwd: ROOT,
+      env: process.env,
+      encoding: "utf8",
+      timeout: 60000,
+    });
+    return { status: r.status, out: (r.stdout || "") + (r.stderr || "") };
+  };
+
+  try {
+    // Three fixtures: orphan file (no row), broken row (no file), healthy pair.
+    writeFileSync(path.join(recDir, orphanFile), "orphan-bytes");
+    await prisma().recording.create({
+      data: { takeId: brokenTake, fileName: `${brokenTake}.webm`, mimeType: "audio/webm", size: 5 },
+    });
+    writeFileSync(path.join(recDir, `${keepTake}.webm`), "keep-bytes");
+    await prisma().recording.create({
+      data: { takeId: keepTake, fileName: `${keepTake}.webm`, mimeType: "audio/webm", size: 9 },
+    });
+
+    // ── Dry run: reports both orphans, deletes nothing ──
+    const dry = runSweep(true);
+    check(dry.status === 0, "sweep --dry-run exits 0");
+    check(
+      dry.out.includes(orphanFile) && dry.out.includes(brokenTake) && dry.out.includes("DRY-RUN"),
+      "dry-run reports the orphaned file + broken row (and marks DRY-RUN)"
+    );
+    check(existsSync(path.join(recDir, orphanFile)), "dry-run keeps the orphaned file");
+    check(
+      (await prisma().recording.findUnique({ where: { takeId: brokenTake } })) !== null,
+      "dry-run keeps the broken row"
+    );
+
+    // ── Real run: orphans gone, healthy pair untouched ──
+    const real = runSweep(false);
+    check(real.status === 0, "sweep exits 0");
+    check(!existsSync(path.join(recDir, orphanFile)), "orphaned file removed from disk");
+    check(
+      (await prisma().recording.findUnique({ where: { takeId: brokenTake } })) === null,
+      "broken row removed from the DB"
+    );
+    check(
+      existsSync(path.join(recDir, `${keepTake}.webm`)) &&
+        (await prisma().recording.findUnique({ where: { takeId: keepTake } })) !== null,
+      "healthy row+file pair survives the sweep"
+    );
+  } finally {
+    await prisma().recording.deleteMany({ where: { takeId: { startsWith: "e2e-sweep-" } } }).catch(() => {});
+    sweepFiles();
+  }
+}
+
+// ── Install-prompt scenario (sidebar PWA button) ─────────────────────
+// The sidebar „⬇️ Zainstaluj aplikację” button must appear only after the
+// browser offers the install (beforeinstallprompt) and hide once installed.
+// The synthetic event carries a stubbed prompt()/userChoice — the exact
+// contract the button uses.
+async function scenarioInstallPrompt(cdp, appUrl) {
+  console.log("\n== 21. Install prompt — sidebar „Zainstaluj aplikację” ==");
+  const root = new URL(appUrl).origin + "/";
+
+  // Headless Chrome CAN fire a real beforeinstallprompt once the app is
+  // installable (manifest + icons + SW from the PWA scenario) — that would
+  // pre-populate the button before we dispatch our synthetic event. Block the
+  // real one at the document level (first-registered listener on window wins
+  // at-target dispatch order) so the sidebar only ever sees OUR event.
+  // Test-dispatched events are tagged __testInstall and pass through; the
+  // blocker only swallows the REAL browser event.
+  const blocker = await cdp.send("Page.addScriptToEvaluateOnNewDocument", {
+    source: `(() => {
+      window.addEventListener('beforeinstallprompt', (e) => {
+        if (e.__testInstall) return;
+        window.__realBeforeInstallFired = true;
+        e.stopImmediatePropagation();
+      }, true);
+    })();`,
+  });
+
+  await cdp.goto(root + "/vault", `document.body.textContent.includes('The Vault')`);
+  await sleep(400);
+
+  // 1. Default: no button until the browser offers the install.
+  check(
+    (await cdp.evaluate(`!!document.querySelector('[data-install-app]')`)) === false,
+    "install button hidden before beforeinstallprompt fires"
+  );
+
+  // 2. Dispatch the prompt event (accepted outcome) → button appears.
+  await cdp.evaluate(`(() => {
+    window.__installPrompted = 0;
+    const ev = new Event('beforeinstallprompt', { cancelable: true });
+    ev.__testInstall = true;
+    Object.assign(ev, {
+      prompt: () => { window.__installPrompted += 1; return Promise.resolve(); },
+      userChoice: Promise.resolve({ outcome: 'accepted' }),
+    });
+    window.dispatchEvent(ev);
+    return true;
+  })()`);
+  await cdp.waitFor(`!!document.querySelector('[data-install-app]')`, 10000, 150, "install button visible");
+  const shown = await cdp.evaluate(`(() => {
+    const btn = document.querySelector('[data-install-app]');
+    return { text: btn ? btn.textContent : null, inFooter: !!btn && !!btn.closest('aside') };
+  })()`);
+  check(shown.text && shown.text.includes("Zainstaluj aplikację"), "button „⬇️ Zainstaluj aplikację” rendered in the sidebar");
+  check(shown.inFooter === true, "button lives inside the sidebar footer");
+
+  // 3. Click → real prompt() invoked, accepted → button disappears.
+  check(await cdp.evaluate(`(() => { document.querySelector('[data-install-app]').click(); return true; })()`), "clicked the install button");
+  await cdp.waitFor(`!document.querySelector('[data-install-app]')`, 10000, 150, "button hides after accepted install");
+  check(
+    (await cdp.evaluate(`window.__installPrompted`)) === 1,
+    "prompt() invoked exactly once on the stored beforeinstallprompt event"
+  );
+
+  // 4. Dismissed outcome → button STAYS (user can retry).
+  await cdp.evaluate(`(() => {
+    const ev = new Event('beforeinstallprompt', { cancelable: true });
+    ev.__testInstall = true;
+    Object.assign(ev, {
+      prompt: () => { window.__installPrompted += 1; return Promise.resolve(); },
+      userChoice: Promise.resolve({ outcome: 'dismissed' }),
+    });
+    window.dispatchEvent(ev);
+    return true;
+  })()`);
+  await cdp.waitFor(`!!document.querySelector('[data-install-app]')`, 10000, 150, "button reappears for the retry");
+  await cdp.evaluate(`document.querySelector('[data-install-app]').click()`);
+  await sleep(400);
+  check(
+    (await cdp.evaluate(`window.__installPrompted`)) === 2 &&
+      (await cdp.evaluate(`!!document.querySelector('[data-install-app]')`)) === true,
+    "dismissed install keeps the button (prompt called again)"
+  );
+
+  // 5. appinstalled hides the button permanently (already-running PWA case).
+  await cdp.evaluate(`window.dispatchEvent(new Event('appinstalled')); true`);
+  await cdp.waitFor(`!document.querySelector('[data-install-app]')`, 10000, 150, "button hides after appinstalled");
+  check(
+    (await cdp.evaluate(`!!document.querySelector('[data-install-app]')`)) === false,
+    "appinstalled event removes the install button"
+  );
+
+  // Remove the document-level blocker — later navigations are unaffected.
+  await cdp.send("Page.removeScriptToEvaluateOnNewDocument", {
+    identifier: blocker.identifier,
+  }).catch(() => {});
+}
+
+// ── Stem-upload scenario (4-channel form in the „Dodaj Numer” modal) ──
+// Uploads a REAL stem pack through the modal (drums/bass/melody/vocals) via
+// DOM.setFileInputFiles, then verifies the card + mixer render and the DB row
+// carries isStems + stemsData with 4 audio data URLs. Finally checks the
+// single-beat tab still works. Cleanup removes only the created rows.
+async function scenarioStemUpload(cdp, appUrl) {
+  console.log("\n== 22. Beats — stem upload („Dodaj Numer” modal) ==");
+  const root = new URL(appUrl).origin + "/";
+  const stemsDir = path.join(ROOT, "public", "stems");
+
+  // Deterministic start: remove any leftovers from a previous crash.
+  await prisma().beat.deleteMany({ where: { OR: [{ title: { endsWith: "(Stemy)" } }, { title: "test-beat-a" }] } });
+
+  try {
+    await cdp.goto(root + "/beats", `document.body.textContent.includes('Gotowe Numery')`);
+    await sleep(1200);
+
+    // ── Open the modal → switch to the stems tab ──
+    check(await cdp.clickText("Dodaj Numer"), "„+ Dodaj Numer” opens the upload modal");
+    await cdp.waitFor(`!!document.querySelector('[data-upload-modal]')`, 10000, 150, "upload modal visible");
+    await sleep(300);
+    check(
+      await cdp.evaluate(`(() => {
+        const tab = document.querySelector('[data-upload-mode="stems"]');
+        if (!tab) return false;
+        tab.click();
+        return true;
+      })()`),
+      "switched to the „🎛️ Stemy” tab"
+    );
+    await sleep(300);
+    const inputs = await cdp.evaluate(`(() => {
+      const modal = document.querySelector('[data-upload-modal]');
+      const chans = ["drums", "bass", "melody", "vocals"];
+      return {
+        count: chans.filter((c) => modal.querySelector('[data-stem-upload="' + c + '"]')).length,
+        labels: [...modal.querySelectorAll('label span.text-xs')].map((s) => s.textContent),
+      };
+    })()`);
+    check(inputs.count === 4, "stems tab renders 4 file inputs (drums/bass/melody/vocals)");
+    check(
+      inputs.labels.join(" ").includes("Drums") &&
+        inputs.labels.join(" ").includes("Bass") &&
+        inputs.labels.join(" ").includes("Melody") &&
+        inputs.labels.join(" ").includes("Wokal"),
+      "channel labels: Drums / Bass / Melody / Wokal"
+    );
+
+    // ── Attach real files (the repo's generated stem WAVs) ──
+    const files = {
+      drums: "miejski-rytm-drums.wav",
+      bass: "miejski-rytm-bass.wav",
+      melody: "miejski-rytm-melody.wav",
+      vocals: "miejski-rytm-vocals.wav",
+    };
+    for (const [ch, f] of Object.entries(files)) {
+      check(await cdp.setFileInput(`[data-stem-upload="${ch}"]`, path.join(stemsDir, f)), `attached ${f} to the ${ch} input`);
+    }
+    await sleep(300);
+    const names = await cdp.evaluate(`(() => {
+      const modal = document.querySelector('[data-upload-modal]');
+      return [...modal.querySelectorAll('span')]
+        .filter((s) => s.className.includes('text-[') && s.className.includes('10px]'))
+        .map((s) => s.textContent.trim());
+    })()`);
+    check(names.length === 4 && names.every((n) => n.includes(".wav")), "all four inputs show the chosen file names");
+
+    // ── Submit → card renders + DB row carries isStems + stemsData ──
+    check(
+      await cdp.evaluate(`(() => {
+        const b = document.querySelector('[data-submit-upload="stems"]');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`),
+      "clicked „Wgraj stemy”"
+    );
+    await cdp.waitFor(`!document.querySelector('[data-upload-modal]')`, 10000, 150, "modal closed after upload");
+    await cdp.waitFor(
+      `[...document.querySelectorAll('div.rounded-2xl')].some((c) => c.textContent.includes('(Stemy)'))`,
+      20000,
+      300,
+      "stems card rendered"
+    );
+    await sleep(500);
+    const card = await cdp.evaluate(`(() => {
+      const cardEl = [...document.querySelectorAll('div.rounded-2xl')].find((c) => c.textContent.includes('(Stemy)'));
+      if (!cardEl) return null;
+      const mixer = cardEl.querySelector('[data-stem-mixer]');
+      return {
+        chip: cardEl.textContent.includes("🎛️ Stemy"),
+        channels: mixer ? [...mixer.querySelectorAll('[data-stem-channel]')].length : 0,
+        bars: [...cardEl.querySelectorAll('[class*="w-1.5"]')].length,
+      };
+    })()`);
+    check(!!card && card.chip === true, "uploaded stems card shows the „🎛️ Stemy” chip");
+    check(card.channels === 4, `uploaded stems card renders the mixer with 4 channels (got ${card.channels})`);
+    check(card.bars === 20, `uploaded stems card renders 20 equalizer bars (got ${card.bars})`);
+
+    const row = await prisma().beat.findFirst({
+      where: { title: { endsWith: "(Stemy)" } },
+      orderBy: { createdAt: "desc" },
+    });
+    check(row !== null && row.isStems === true, "DB row created with isStems = true");
+    let stemsData = null;
+    try {
+      stemsData = row ? JSON.parse(row.stemsData || "null") : null;
+    } catch {
+      stemsData = null;
+    }
+    check(
+      !!stemsData &&
+        ["drums", "bass", "melody", "vocals"].every(
+          (c) => typeof stemsData[c] === "string" && stemsData[c].startsWith("data:audio/")
+        ),
+      "stemsData holds 4 audio data URLs (drums/bass/melody/vocals)"
+    );
+
+    // ── Single-beat tab still works (reopens on the „🎵 Bit” default) ──
+    check(await cdp.clickText("Dodaj Numer"), "reopened the upload modal");
+    await cdp.waitFor(`!!document.querySelector('[data-upload-modal]')`, 10000, 150, "modal visible again");
+    await sleep(300);
+    check(
+      await cdp.setFileInput("[data-beat-upload]", path.join(ROOT, "public", "test-beat-a.wav")),
+      "attached test-beat-a.wav in the „🎵 Bit” tab"
+    );
+    check(
+      await cdp.evaluate(`(() => {
+        const b = document.querySelector('[data-submit-upload="beat"]');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`),
+      "clicked „Wgraj bit”"
+    );
+    await cdp.waitFor(
+      `[...document.querySelectorAll('div.rounded-2xl')].some((c) => c.textContent.includes('test-beat-a'))`,
+      20000,
+      300,
+      "single-beat card rendered"
+    );
+    await sleep(400);
+    const beatRow = await prisma().beat.findFirst({
+      where: { title: "test-beat-a" },
+      orderBy: { createdAt: "desc" },
+    });
+    check(
+      beatRow !== null &&
+        beatRow.isStems === false &&
+        typeof beatRow.filePath === "string" &&
+        beatRow.filePath.startsWith("data:audio/"),
+      "single beat stored with filePath data URL (isStems false)"
+    );
+  } finally {
+    await prisma().beat.deleteMany({ where: { OR: [{ title: { endsWith: "(Stemy)" } }, { title: "test-beat-a" }] } });
+  }
+}
+
+// ── Academy scenario (static articles, no DB) ────────────────────────
+async function scenarioAcademy(cdp, appUrl) {
+  console.log("\n== 23. Academy — static articles, filters, accordion ==");
+  const root = new URL(appUrl).origin + "/";
+
+  await cdp.goto(root + "/academy", `document.body.textContent.includes('Akademia FlowForge')`);
+
+  const TITLES = [
+    "Podstawy Budowania Rymów Wielosylabowych",
+    "Flow: Jak Dostosować Wersy Do Bitu",
+    "Technika Mikrofonowa: Jak Brzmieć Profesjonalnie",
+    "Pisanie Storytellingu: Opowiadanie Historii w Wersach",
+    "Jak Przełamać Blokadę Twórczą (Writer's Block)",
+    "Słownik Rymów: Jak Znaleźć Idealny Rym",
+  ];
+
+  // ── Header + full article list ──
+  const header = await cdp.evaluate(`(() => ({
+    title: document.body.textContent.includes('Akademia FlowForge'),
+    subtitle: document.body.textContent.includes('Poradniki i artykuły o rapie, flowie i technice'),
+    articleCount: document.querySelectorAll('h3').length,
+    titles: [...document.querySelectorAll('h3')].map((h) => h.textContent.trim()),
+    filterBtns: [...document.querySelectorAll('button')].filter((b) =>
+      ['🔍 Wszystkie', 'Rymy', 'Flow', 'Technika', 'Twórczość'].includes(b.textContent.trim())
+    ).length,
+    labels: ['Początkujący', 'Średniozaawansowany', 'Zaawansowany'].filter((l) =>
+      document.body.textContent.includes(l)
+    ),
+    readTime: document.body.textContent.includes('⏱ 5 min'),
+  }))()`);
+  check(header.title === true && header.subtitle === true, "header „Akademia FlowForge” + subtitle rendered");
+  check(header.articleCount === 6, `all 6 articles render (got ${header.articleCount})`);
+  check(
+    TITLES.every((t) => header.titles.includes(t)),
+    "all six article titles present"
+  );
+  check(header.filterBtns === 5, "5 category filter buttons (Wszystkie + Rymy/Flow/Technika/Twórczość)");
+  check(
+    header.labels.length === 3,
+    `difficulty badges present (Początkujący / Średniozaawansowany / Zaawansowany)`
+  );
+  check(header.readTime === true, "read time shown (⏱ 5 min)");
+
+  // ── Accordion: expand → content, single-open, collapse ──
+  check(
+    await cdp.evaluate(`!document.body.textContent.includes('Technika 1: Dopasowanie sylab')`),
+    "article content hidden before expansion"
+  );
+  check(
+    await cdp.clickText("Podstawy Budowania Rymów Wielosylabowych"),
+    "clicked the first article header"
+  );
+  await sleep(250);
+  const expanded1 = await cdp.evaluate(`(() => ({
+    content: document.body.textContent.includes('Technika 1: Dopasowanie sylab'),
+    strong: document.querySelectorAll('strong').length > 0,
+  }))()`);
+  check(expanded1.content === true, "expanded article shows its content");
+  check(expanded1.strong === true, "**bold** segments render as <strong>");
+
+  // Single-open accordion: opening a second article collapses the first.
+  check(
+    await cdp.clickText("Flow: Jak Dostosować Wersy Do Bitu"),
+    "clicked the second article header"
+  );
+  await sleep(250);
+  const accordion = await cdp.evaluate(`(() => ({
+    secondOpen: document.body.textContent.includes('Krok 1: Poznaj BPM bitu'),
+    firstClosed: !document.body.textContent.includes('Technika 1: Dopasowanie sylab'),
+  }))()`);
+  check(accordion.secondOpen === true, "second article expands");
+  check(accordion.firstClosed === true, "first article collapses (single-open accordion)");
+  check(
+    await cdp.clickText("Flow: Jak Dostosować Wersy Do Bitu"),
+    "clicked the second article again"
+  );
+  await sleep(250);
+  check(
+    await cdp.evaluate(`!document.body.textContent.includes('Krok 1: Poznaj BPM bitu')`),
+    "re-click collapses the article"
+  );
+
+  // ── Category filters ──
+  const filter = async (label) => {
+    await cdp.clickText(label);
+    await sleep(250);
+    return cdp.evaluate(`[...document.querySelectorAll('h3')].map((h) => h.textContent.trim())`);
+  };
+
+  const rymy = await filter("Rymy");
+  check(
+    rymy.length === 2 && rymy.includes(TITLES[0]) && rymy.includes(TITLES[5]),
+    `„Rymy” filter shows 2 articles (got ${rymy.length})`
+  );
+
+  const flow = await filter("Flow");
+  check(flow.length === 1 && flow[0] === TITLES[1], `„Flow” filter shows 1 article (got ${flow.length})`);
+
+  const technika = await filter("Technika");
+  check(technika.length === 1 && technika[0] === TITLES[2], `„Technika” filter shows 1 article (got ${technika.length})`);
+
+  const tworczosc = await filter("Twórczość");
+  check(
+    tworczosc.length === 2 && tworczosc.includes(TITLES[3]) && tworczosc.includes(TITLES[4]),
+    `„Twórczość” filter shows 2 articles (got ${tworczosc.length})`
+  );
+
+  const all = await filter("🔍 Wszystkie");
+  check(all.length === 6, `„Wszystkie” restores all 6 articles (got ${all.length})`);
+}
+
+// ── Edit beat scenario (✏️ title/artist/BPM/key on /beats) ────────────
+async function scenarioEditBeat(cdp, appUrl) {
+  console.log("\n== 24. Beats — edit beat card (✏️ title/artist/BPM/key) ==");
+  const root = new URL(appUrl).origin + "/";
+
+  const fixture = {
+    id: "e2e-edit-beat",
+    title: "Oryginalny Tytul",
+    artist: "Oryginalny Artysta",
+    bpm: 90,
+    key: "Am",
+    genre: "Boom Bap",
+    duration: 8,
+    filePath: "/test-beat-a.wav",
+  };
+  try {
+    const { id, ...rest } = fixture;
+    await prisma().beat.upsert({ where: { id }, update: { ...rest }, create: { ...fixture } });
+
+    await cdp.goto(root + "/beats", `document.body.textContent.includes('Gotowe Numery')`);
+    await sleep(1200); // server action round-trip + re-render
+
+    // ── Card renders the original values + the ✏️ button ──
+    const card = await cdp.evaluate(`(() => {
+      const cardEl = [...document.querySelectorAll('div.rounded-2xl')].find((c) => c.textContent.includes('Oryginalny Tytul'));
+      if (!cardEl) return null;
+      // Note: genre isn't rendered on regular (non-project) beat cards —
+      // only BPM/key/duration are — so it's asserted via the DB row below.
+      return {
+        hasEdit: !!cardEl.querySelector('[data-edit-beat="e2e-edit-beat"]'),
+        artist: cardEl.textContent.includes('Oryginalny Artysta'),
+        meta: cardEl.textContent.includes('90 BPM') && cardEl.textContent.includes('Am'),
+      };
+    })()`);
+    check(!!card, "seeded beat card renders");
+    check(card.hasEdit === true, "✏️ edit button on the beat card");
+    check(card.artist === true && card.meta === true, "card shows original artist / 90 BPM / key Am");
+
+    // ── Open the modal → fields prefilled from the row ──
+    check(
+      await cdp.evaluate(`(() => {
+        const b = document.querySelector('[data-edit-beat="e2e-edit-beat"]');
+        if (!b) return false;
+        b.click();
+        return true;
+      })()`),
+      "clicked ✏️ on the card"
+    );
+    await sleep(300);
+    const modal = await cdp.evaluate(`(() => {
+      const m = document.querySelector('[data-edit-modal]');
+      if (!m) return null;
+      const val = (sel) => { const el = m.querySelector(sel); return el ? el.value : null; };
+      return {
+        title: val('[data-edit-field="title"]'),
+        artist: val('[data-edit-field="artist"]'),
+        bpm: val('[data-edit-field="bpm"]'),
+        key: val('[data-edit-field="key"]'),
+      };
+    })()`);
+    check(!!modal, "edit modal opened");
+    check(
+      modal.title === "Oryginalny Tytul" && modal.artist === "Oryginalny Artysta" && modal.bpm === "90" && modal.key === "Am",
+      `modal prefilled from the row (got ${modal.title}/${modal.artist}/${modal.bpm}/${modal.key})`
+    );
+
+    // ── Validation: empty title keeps the modal open ──
+    check(await cdp.setInput(`[data-edit-field="title"]`, ""), "cleared the title");
+    await cdp.evaluate(`(() => { const b = document.querySelector('[data-edit-save]'); if (!b) return false; b.click(); return true; })()`);
+    await sleep(400);
+    const validation = await cdp.evaluate(`(() => ({
+      modalOpen: !!document.querySelector('[data-edit-modal]'),
+      toast: document.body.textContent.includes('Tytuł nie może być pusty'),
+    }))()`);
+    check(validation.modalOpen === true, "empty title keeps the modal open");
+    check(validation.toast === true, "validation toast „Tytuł nie może być pusty” shown");
+
+    // ── Edit all four fields + save ──
+    check(await cdp.setInput(`[data-edit-field="title"]`, "Nowy Tytul E2E"), "typed the new title");
+    check(await cdp.setInput(`[data-edit-field="artist"]`, "Nowy Artysta E2E"), "typed the new artist");
+    check(await cdp.setInput(`[data-edit-field="bpm"]`, "105"), "typed the new BPM");
+    check(
+      await cdp.evaluate(`(() => {
+        const sel = document.querySelector('[data-edit-field="key"]');
+        if (!sel) return false;
+        const setter = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, 'value').set;
+        setter.call(sel, 'Fm');
+        sel.dispatchEvent(new Event('change', { bubbles: true }));
+        return true;
+      })()`),
+      "picked key Fm"
+    );
+    await sleep(200);
+    check(
+      await cdp.evaluate(`(() => { const b = document.querySelector('[data-edit-save]'); if (!b) return false; b.click(); return true; })()`),
+      "clicked „💾 Zapisz zmiany”"
+    );
+    await cdp.waitFor(
+      `document.body.textContent.includes('Nowy Tytul E2E') && !document.querySelector('[data-edit-modal]')`,
+      15000,
+      200,
+      "card updates + modal closes"
+    );
+
+    // ── Card + DB reflect the edit; unrelated fields untouched ──
+    const updated = await cdp.evaluate(`(() => {
+      const cardEl = [...document.querySelectorAll('div.rounded-2xl')].find((c) => c.textContent.includes('Nowy Tytul E2E'));
+      if (!cardEl) return null;
+      return {
+        artist: cardEl.textContent.includes('Nowy Artysta E2E'),
+        meta: cardEl.textContent.includes('105 BPM') && cardEl.textContent.includes('Fm'),
+      };
+    })()`);
+    check(updated !== null && updated.artist && updated.meta, "card shows new title/artist/105 BPM/Fm");
+
+    const row = await prisma().beat.findUnique({ where: { id: "e2e-edit-beat" } });
+    check(
+      row !== null &&
+        row.title === "Nowy Tytul E2E" &&
+        row.artist === "Nowy Artysta E2E" &&
+        row.bpm === 105 &&
+        row.key === "Fm" &&
+        row.genre === "Boom Bap" &&
+        row.duration === 8 &&
+        row.filePath === "/test-beat-a.wav",
+      "DB row updated (title/artist/bpm/key), genre/duration/filePath untouched"
+    );
+
+    // ── Reload → edit persists (DB-primary) ──
+    await cdp.goto(root + "/beats", `document.body.textContent.includes('Gotowe Numery')`);
+    await sleep(1200);
+    const afterReload = await cdp.evaluate(`(() => {
+      const cardEl = [...document.querySelectorAll('div.rounded-2xl')].find((c) => c.textContent.includes('Nowy Tytul E2E'));
+      return cardEl
+        ? cardEl.textContent.includes('105 BPM') && cardEl.textContent.includes('Fm') && cardEl.textContent.includes('Nowy Artysta E2E')
+        : false;
+    })()`);
+    check(afterReload === true, "edit persists after reload (105 BPM / Fm / new artist)");
+
+    // ── Search box: filters cards by title/artist (regression guard) ──
+    const allCards = await cdp.evaluate(`document.querySelectorAll('div.rounded-2xl').length`);
+    check(allCards > 0, "search starts with a populated grid");
+    check(await cdp.setInput(`input[placeholder*='Szukaj numerów']`, "Nowy Tytul"), "typed in the search box");
+    // Debounce guard: before the 150 ms window elapses the grid is still
+    // unfiltered; only after it does the narrowing apply.
+    await sleep(60);
+    check(
+      (await cdp.evaluate(`document.querySelectorAll('div.rounded-2xl').length`)) === allCards,
+      "grid not filtered yet inside the debounce window"
+    );
+    await sleep(300);
+    const filtered = await cdp.evaluate(`(() => {
+      const cards = [...document.querySelectorAll('div.rounded-2xl')];
+      return {
+        count: cards.length,
+        onlyMatch: cards.length === 1 && cards[0].textContent.includes('Nowy Tytul E2E'),
+      };
+    })()`);
+    check(
+      filtered.count === 1 && filtered.onlyMatch === true,
+      `search narrows to the matching card (got ${filtered.count})`
+    );
+    check(await cdp.setInput(`input[placeholder*='Szukaj numerów']`, "nieistniejacy-numer-xyz"), "typed a no-match query");
+    await sleep(300);
+    // Real beat cards carry ✏️ edit buttons — the „Brak wyników” container is
+    // itself rounded-2xl, so count cards via [data-edit-beat] instead.
+    const noMatch = await cdp.evaluate(`(() => ({
+      empty: document.body.textContent.includes('Brak wyników'),
+      cards: document.querySelectorAll('[data-edit-beat]').length,
+    }))()`);
+    check(noMatch.empty === true && noMatch.cards === 0, "no-match query shows „Brak wyników” + zero cards");
+    check(await cdp.setInput(`input[placeholder*='Szukaj numerów']`, ""), "cleared the search box");
+    await sleep(300);
+    check(
+      (await cdp.evaluate(`document.querySelectorAll('div.rounded-2xl').length`)) === allCards,
+      "clearing the search restores the full grid"
+    );
+  } finally {
+    await prisma().beat.deleteMany({ where: { id: "e2e-edit-beat" } });
+  }
+}
+
+// ── Create-cypher scenario („+ Nowy Cypher” form on /challenges) ──────
+async function scenarioCreateCypher(cdp, appUrl) {
+  console.log("\n== 25. Challenges — create cypher (form + deadline) ==");
+  const root = new URL(appUrl).origin + "/";
+  const day = 24 * 60 * 60 * 1000;
+  const TITLE = "Cypher E2E Nowy";
+
+  const future = new Date(Date.now() + 10 * day);
+  const dateStr = `${future.getFullYear()}-${String(future.getMonth() + 1).padStart(2, "0")}-${String(
+    future.getDate()
+  ).padStart(2, "0")}`;
+
+  try {
+    await cdp.goto(root + "/challenges", `document.body.textContent.includes('Jak zdobywać punkty?')`);
+    await sleep(400);
+
+    // ── Open the modal ──
+    check(
+      await cdp.evaluate(`(() => { const b = document.querySelector('[data-create-open]'); if (!b) return false; b.click(); return true; })()`),
+      "clicked „+ Nowy Cypher”"
+    );
+    await sleep(300);
+    check(await cdp.evaluate(`!!document.querySelector('[data-create-modal]')`), "create modal opened");
+
+    // ── Validation: empty title ──
+    await cdp.evaluate(`(() => { const b = document.querySelector('[data-create-save]'); if (!b) return false; b.click(); return true; })()`);
+    await sleep(400);
+    const v1 = await cdp.evaluate(`(() => ({
+      open: !!document.querySelector('[data-create-modal]'),
+      toast: document.body.textContent.includes('Tytuł cypheru jest wymagany'),
+    }))()`);
+    check(v1.open === true, "empty title keeps the modal open");
+    check(v1.toast === true, "validation toast „Tytuł cypheru jest wymagany”");
+
+    // ── Validation: past deadline ──
+    check(await cdp.setInput(`[data-create-field="title"]`, TITLE), "typed the title");
+    const past = new Date(Date.now() - 2 * day);
+    const pastStr = `${past.getFullYear()}-${String(past.getMonth() + 1).padStart(2, "0")}-${String(past.getDate()).padStart(2, "0")}`;
+    check(await cdp.setInput(`[data-create-field="endDate"]`, pastStr), "typed a past deadline");
+    await sleep(200);
+    await cdp.evaluate(`(() => { const b = document.querySelector('[data-create-save]'); if (!b) return false; b.click(); return true; })()`);
+    await sleep(400);
+    const v2 = await cdp.evaluate(`(() => ({
+      open: !!document.querySelector('[data-create-modal]'),
+      toast: document.body.textContent.includes('Data musi być w przyszłości'),
+    }))()`);
+    check(v2.open === true && v2.toast === true, "past deadline rejected („Data musi być w przyszłości”)");
+
+    // ── Fill the full form + save ──
+    check(
+      await cdp.setInput(`[data-create-field="description"]`, "Wers o testowaniu automatycznym"),
+      "typed the description"
+    );
+    check(await cdp.setInput(`[data-create-field="prize"]`, "Wyróżnienie testowe"), "typed the prize");
+    check(await cdp.setInput(`[data-create-field="endDate"]`, dateStr), "typed a future deadline (+10d)");
+    await sleep(200);
+    check(
+      await cdp.evaluate(`(() => { const b = document.querySelector('[data-create-save]'); if (!b) return false; b.click(); return true; })()`),
+      "clicked „⚔️ Utwórz cypher”"
+    );
+    await cdp.waitFor(
+      `document.body.textContent.includes('${TITLE}') && !document.querySelector('[data-create-modal]')`,
+      15000,
+      200,
+      "card renders + modal closes"
+    );
+
+    // ── Card shows title / description / prize / countdown / empty subs ──
+    const row = await prisma().challenge.findFirst({ where: { title: TITLE } });
+    const expectedDays = row
+      ? String(Math.max(0, Math.ceil((row.endDate.getTime() - Date.now()) / 86400000)))
+      : null;
+    const card = await cdp.evaluate(`(() => {
+      const cardEl = [...document.querySelectorAll('div.rounded-2xl')].find((c) => c.textContent.includes('${TITLE}'));
+      if (!cardEl) return null;
+      return {
+        title: cardEl.textContent.includes('${TITLE}'),
+        desc: cardEl.textContent.includes('Wers o testowaniu automatycznym'),
+        prize: cardEl.textContent.includes('Wyróżnienie testowe'),
+        countdown: (cardEl.textContent.match(/([0-9]+)d/) || [])[1] ?? null,
+        empty: cardEl.textContent.includes('Brak zgłoszeń — bądź pierwszy!'),
+        counter: cardEl.textContent.includes('Zgłoszenia • 0'),
+      };
+    })()`);
+    check(!!card, "new cypher card rendered in „Aktywne Cyphery”");
+    check(card.title === true && card.desc === true && card.prize === true, "card shows title / description / prize");
+    check(
+      expectedDays !== null && card.countdown === expectedDays,
+      `countdown matches the deadline (${expectedDays}d, got ${card.countdown})`
+    );
+    check(card.empty === true && card.counter === true, "new cypher shows „Zgłoszenia • 0” + empty state");
+
+    // ── DB row: created active, deadline stored ──
+    check(
+      row !== null && row.isActive === true && row.endDate.getTime() > Date.now(),
+      "DB row created (isActive true, future endDate)"
+    );
+
+    // ── Reload → the cypher persists (DB-primary) ──
+    await cdp.goto(root + "/challenges", `document.body.textContent.includes('Jak zdobywać punkty?')`);
+    await sleep(1200);
+    check(
+      await cdp.evaluate(`(() => {
+        const cardEl = [...document.querySelectorAll('div.rounded-2xl')].find((c) => c.textContent.includes('${TITLE}'));
+        return !!cardEl && cardEl.textContent.includes('Zgłoszenia • 0');
+      })()`),
+      "new cypher persists after reload"
+    );
+  } finally {
+    // Submissions cascade on challenge delete.
+    await prisma().challenge.deleteMany({ where: { title: TITLE } });
+  }
+}
+
 // ── Scenarios ────────────────────────────────────────────────────────
 async function scenarioRhymeMetronomeMoodboard(cdp, url) {
   console.log("\n== 1. Rhyme markers ==");
@@ -2482,6 +4523,393 @@ async function scenarioRhymeMetronomeMoodboard(cdp, url) {
     markerSummary.heights.filter((h) => h > 0).length === markerSummary.visible,
     "marked markers have a real measured height"
   );
+
+  // Editor ↔ panel 1:1 — for every line, the SET of „Analiza Wersów” dot
+  // colors must equal the SET of editor word-highlight colors (rgba alpha
+  // stripped). Multi-cluster lines carry multiple dots/spans.
+  const colorSync = await cdp.evaluate(`(() => {
+    const ta = document.querySelector('textarea');
+    const raw = ta.value.split('\\n');
+    const card = [...document.querySelectorAll('h3')].find(h => h.textContent.includes('Analiza Wersów'));
+    if (!card) return null;
+    const panel = card.closest('div.rounded-xl');
+    const rows = [...panel.querySelectorAll('div.space-y-1 > div')].filter(r => r.textContent.trim().length > 0);
+    const lineDivs = [...document.querySelectorAll('.vault-text-line')];
+    const rgb = (c) => c.indexOf('rgba(') === 0 ? 'rgb(' + c.slice(5, c.lastIndexOf(',')) + ')' : c;
+    const rawIdxOf = [];
+    let rawIdx = 0;
+    for (const r of rows) {
+      while (raw[rawIdx] !== undefined && raw[rawIdx].trim().length === 0) rawIdx++;
+      rawIdxOf.push(rawIdx);
+      rawIdx++;
+    }
+    const mismatch = [];
+    rows.forEach((row, i) => {
+      const ri = rawIdxOf[i];
+      // SET comparison: several words on one line may share a cluster color
+      // (one dot per cluster), so dedupe before comparing.
+      const dotColors = [...new Set([...row.querySelectorAll('[data-rhyme-dot]')].map(d => rgb(getComputedStyle(d).backgroundColor)))].sort();
+      const spanColors = [...new Set(lineDivs[ri]
+        ? [...lineDivs[ri].querySelectorAll('[data-rhyme-word]')].map(s => rgb(getComputedStyle(s).backgroundColor))
+        : [])].sort();
+      if (JSON.stringify(dotColors) !== JSON.stringify(spanColors)) {
+        mismatch.push({ ri, dotColors, spanColors });
+      }
+    });
+    return { rows: rows.length, mismatch };
+  })()`);
+  check(
+    colorSync && colorSync.rows === 4 && colorSync.mismatch.length === 0,
+    `editor word highlights match the „Analiza Wersów” dot colors 1:1 (${colorSync ? colorSync.mismatch.length + " mismatches" : "panel not found"})`
+  );
+
+  // ── Rhyme granularity: blank-line stanza breaks + multi-word highlights ──
+  // The panel skips blank lines but must look cluster colors up by RAW line
+  // index. The text carries THREE word-level clusters — „jakiś/taki” (mid-
+  // line internal rhyme), the user's „dziwny/inni” (assonance) and
+  // „mówi/ludzi/budzi” — so several lines hold multiple highlights.
+  const stanzaText =
+    "On jest jakiś dziwny\nNikt nie jest taki inni\n\nMówi, że pisze dla ludzi\nA w nocy sam siebie budzi";
+  check(await cdp.setTextarea(stanzaText), "typed lyrics with a blank-line stanza break");
+  await sleep(500);
+
+  const stanzaSync = await cdp.evaluate(`(() => {
+    const ta = document.querySelector('textarea');
+    const raw = ta.value.split('\\n');
+    const card = [...document.querySelectorAll('h3')].find(h => h.textContent.includes('Analiza Wersów'));
+    if (!card) return null;
+    const panel = card.closest('div.rounded-xl');
+    const rows = [...panel.querySelectorAll('div.space-y-1 > div')].filter(r => r.textContent.trim().length > 0);
+    const lineDivs = [...document.querySelectorAll('.vault-text-line')];
+    const rgb = (c) => c.indexOf('rgba(') === 0 ? 'rgb(' + c.slice(5, c.lastIndexOf(',')) + ')' : c;
+    // Map each non-blank panel row to its RAW line index (same walk as the panel).
+    const rawIdxOf = [];
+    let rawIdx = 0;
+    for (const r of rows) {
+      while (raw[rawIdx] !== undefined && raw[rawIdx].trim().length === 0) rawIdx++;
+      rawIdxOf.push(rawIdx);
+      rawIdx++;
+    }
+    const mismatch = [];
+    const byWord = {};
+    const wordTexts = [];
+    rows.forEach((row, i) => {
+      const ri = rawIdxOf[i];
+      const dotColors = [...new Set([...row.querySelectorAll('[data-rhyme-dot]')].map(d => rgb(getComputedStyle(d).backgroundColor)))].sort();
+      const spans = lineDivs[ri] ? [...lineDivs[ri].querySelectorAll('[data-rhyme-word]')] : [];
+      const spanColors = [...new Set(spans.map(s => rgb(getComputedStyle(s).backgroundColor)))].sort();
+      const texts = spans.map(s => s.textContent);
+      wordTexts.push(texts);
+      if (JSON.stringify(dotColors) !== JSON.stringify(spanColors)) mismatch.push({ ri, dotColors, spanColors });
+      const lineText = raw[ri] || '';
+      if (lineText.includes('dziwny') || lineText.includes('inni')) {
+        const target = lineText.includes('dziwny') ? 'dziwny' : 'inni';
+        const ti = texts.indexOf(target);
+        byWord[target] = ti >= 0 ? spanColors[ti] : 'transparent';
+      }
+    });
+    return {
+      rawLines: raw.length,
+      rows: rows.length,
+      mismatch,
+      wordTexts,
+      dziwnyBg: byWord['dziwny'] || null,
+      inniBg: byWord['inni'] || null,
+      shared: byWord['dziwny'] === byWord['inni'] && byWord['dziwny'] !== 'transparent' && byWord['dziwny'] != null,
+      summary: [...document.querySelectorAll('span')].find(s => s.textContent.includes('grup rymów'))?.textContent.trim() || null,
+    };
+  })()`);
+  check(
+    stanzaSync && stanzaSync.rawLines === 5 && stanzaSync.rows === 4,
+    `panel skips the blank line but keeps 4 rows out of 5 raw lines (${stanzaSync ? stanzaSync.rows + "/" + stanzaSync.rawLines : "panel not found"})`
+  );
+  check(
+    stanzaSync && stanzaSync.mismatch.length === 0,
+    `„Analiza Wersów” dots stay 1:1 with editor highlights across a stanza break (${stanzaSync ? stanzaSync.mismatch.length + " mismatches" : "panel not found"})`
+  );
+  check(
+    stanzaSync && stanzaSync.shared === true && stanzaSync.dziwnyBg === stanzaSync.inniBg,
+    `„dziwny” and „inni” words share the same highlight color (${stanzaSync ? JSON.stringify([stanzaSync.dziwnyBg, stanzaSync.inniBg]) : "panel not found"})`
+  );
+  check(
+    stanzaSync && JSON.stringify(stanzaSync.wordTexts) === JSON.stringify([['jakiś', 'dziwny'], ['taki', 'inni'], ['Mówi,', 'ludzi'], ['budzi']]),
+    `the editor highlights every matching word, incl. internal rhymes — not just line endings (${stanzaSync ? JSON.stringify(stanzaSync.wordTexts) : "panel not found"})`
+  );
+  check(
+    stanzaSync && stanzaSync.summary !== null && stanzaSync.summary.includes('3 grup'),
+    `summary reports 3 rhyme groups for the stanza text (word-level clusters) (${stanzaSync ? stanzaSync.summary : "no summary"})`
+  );
+
+  // ── Export PDF: print view (portal) + ExportLog „pdf” ──
+  await cdp.evaluate(`(() => { window.__printed = 0; window.print = () => { window.__printed += 1; }; return true; })()`);
+  check(await cdp.clickText("Eksportuj PDF"), "clicked „📄 Eksportuj PDF”");
+  await cdp.waitFor(`!!document.querySelector('#print-area')`, 10000, 200, "print area rendered");
+  await sleep(400);
+  const pdfView = await cdp.evaluate(`(() => {
+    const area = document.querySelector('#print-area');
+    return {
+      printed: window.__printed || 0,
+      title: area ? area.textContent.includes('On jest jakiś dziwny') : false,
+      stats: area ? area.textContent.includes('Linie: 4') && area.textContent.includes('Sylaby:') : false,
+      brand: area ? area.textContent.includes('FlowForge') : false,
+    };
+  })()`);
+  check(pdfView.printed >= 1, "window.print() invoked for the PDF export");
+  check(pdfView.title === true, "print area contains the exported lyrics");
+  check(pdfView.stats === true, "print card shows the stats line (Linie: 4 + Sylaby)");
+  check(pdfView.brand === true, "print card branded „FlowForge”");
+  // The export persisted the lyric, then logged format „pdf”.
+  const pdfLog = await prisma().exportLog.findFirst({ where: { format: "pdf" }, orderBy: { createdAt: "desc" } });
+  check(pdfLog !== null, "ExportLog row with format \"pdf\" written");
+
+  // ── ExportLog as a real history source: badge + „🧹 Wyczyść historię” ──
+  const histPanel = await cdp.evaluate(`(() => {
+    const h = [...document.querySelectorAll('h3')].find(x => x.textContent.includes('Historia Eksportów'));
+    const panel = h ? h.closest('div') : null;
+    return panel ? {
+      pdfBadge: panel.textContent.includes('PDF'),
+      clearBtn: [...panel.querySelectorAll('button')].some(b => b.textContent.includes('Wyczyść historię')),
+    } : null;
+  })()`);
+  check(histPanel !== null && histPanel.pdfBadge === true, "history panel shows the „📄 PDF” format badge");
+  check(histPanel !== null && histPanel.clearBtn === true, "„🧹 Wyczyść historię” button present");
+  check(await cdp.clickText("Wyczyść historię"), "clicked „🧹 Wyczyść historię”");
+  await cdp.waitFor(`document.body.textContent.includes('Brak eksportów')`, 10000, 200, "history panel empty state");
+  await sleep(300);
+  check((await prisma().exportLog.count()) === 0, "ExportLog table emptied after „Wyczyść historię”");
+
+  // Cleanup: detach the print area + remove the row and its lyric.
+  await cdp.evaluate(`(() => { const el = document.querySelector('#print-area'); if (el) el.remove(); return true; })()`);
+  if (pdfLog) {
+    await prisma().exportLog.deleteMany({ where: { lyricId: pdfLog.lyricId ?? "" } });
+    if (pdfLog.lyricId) await prisma().lyric.deleteMany({ where: { id: pdfLog.lyricId } });
+  }
+
+  // ── Internal-position rhyme: „Płomień” ↔ „Promień” at token index 0 ──
+  // Both words are the FIRST word of their line (not the line end) — a rhyme
+  // only a full-text scan can catch, and both must share one highlight color.
+  const internalText = "Płomień gaśnie w wielkim mieście\nPromień słońca w oknie płynie";
+  check(await cdp.setTextarea(internalText), "typed lyrics with an internal-position rhyme pair");
+  await sleep(500);
+  const internalSync = await cdp.evaluate(`(() => {
+    const lineDivs = [...document.querySelectorAll('.vault-text-line')];
+    const spans = (i) => lineDivs[i] ? [...lineDivs[i].querySelectorAll('[data-rhyme-word]')] : [];
+    const rgb = (c) => c.indexOf('rgba(') === 0 ? 'rgb(' + c.slice(5, c.lastIndexOf(',')) + ')' : c;
+    const s0 = spans(0).find(s => s.textContent === 'Płomień');
+    const s1 = spans(1).find(s => s.textContent === 'Promień');
+    const lineText = (i) => (lineDivs[i] ? lineDivs[i].textContent.trim() : '');
+    return {
+      hit: s0 !== undefined && s1 !== undefined,
+      // The matching word sits at the line START (internal position) —
+      // and it is NOT the line's last word (not an end-rhyme).
+      atLineStart: lineText(0).startsWith('Płomień') && lineText(1).startsWith('Promień'),
+      notLineEnd: s0 !== undefined && !lineText(0).endsWith(s0.textContent),
+      shared: s0 && s1 ? rgb(getComputedStyle(s0).backgroundColor) === rgb(getComputedStyle(s1).backgroundColor) : false,
+      color: s0 ? getComputedStyle(s0).backgroundColor : null,
+    };
+  })()`);
+  check(
+    internalSync && internalSync.hit === true && internalSync.atLineStart === true &&
+      internalSync.notLineEnd === true && internalSync.shared === true && internalSync.color !== 'transparent',
+    `„Płomień” ↔ „Promień” rhyme at an internal position (line start, not the line end) and share one highlight color (${internalSync ? JSON.stringify([internalSync.atLineStart, internalSync.notLineEnd, internalSync.shared, internalSync.color]) : "panel not found"})`
+  );
+
+  // ── Writer's Block: categorized „Iskra” + „Losuj Klimat” ──
+  await cdp.clickText("Blokada Twórcza");
+  await sleep(400);
+  check(
+    await cdp.evaluate(`!![...document.querySelectorAll('h4')].find(h => h.textContent.includes('Iskra Inspiracji'))`),
+    "writer block panel opened (Iskra Inspiracji section)"
+  );
+  const sparkCategories = ['Ustawki puenty', 'Koncepcje tematyczne', 'Zabawy słowne', 'Linie otwierające', 'Abstrakcyjne obrazy', 'Klimat:'];
+  check(await cdp.clickText("Losuj Iskrę"), "clicked „🎲 Losuj Iskrę”");
+  await sleep(300);
+  const spark1 = await cdp.evaluate(`(() => {
+    const card = document.querySelector('[data-spark-card]');
+    if (!card) return null;
+    const label = card.querySelector('p')?.textContent || '';
+    const quote = card.querySelectorAll('p')[1]?.textContent || '';
+    return { label, quote: quote.replace(/^“|”$/g, ''), categorized: ${JSON.stringify(sparkCategories)}.some(c => label.includes(c)) };
+  })()`);
+  check(
+    spark1 !== null && spark1.categorized === true && spark1.quote.length > 10,
+    `spark drawn from a labeled category (${spark1 ? spark1.label : "no card"})`
+  );
+  check(await cdp.clickText("Losuj Iskrę"), "re-rolled „Losuj Iskrę”");
+  await sleep(300);
+  check(
+    await cdp.evaluate(`!!document.querySelector('[data-spark-card]')`),
+    "spark card still present after another roll"
+  );
+
+  // „Losuj Klimat” — auto-selects mood tags (with glow) and re-rolls a spark
+  // tailored to the new vibe.
+  check(await cdp.clickText("Losuj Klimat"), "clicked „🎲 Losuj Klimat”");
+  await sleep(350);
+  const klimat = await cdp.evaluate(`(() => {
+    const active = [...document.querySelectorAll('[data-mood-tag]')].filter(b => b.dataset.moodActive === 'true');
+    const glow = active.some(b => getComputedStyle(b).boxShadow !== 'none');
+    const wordsBox = [...document.querySelectorAll('p')].find(p => p.textContent.includes('Słowa:'));
+    return {
+      activeCount: active.length,
+      glow,
+      wordsBox: !!wordsBox,
+      spark: !!document.querySelector('[data-spark-card]'),
+    };
+  })()`);
+  check(
+    klimat && klimat.activeCount >= 1 && klimat.activeCount <= 3,
+    `„Losuj Klimat” auto-selected ${klimat ? klimat.activeCount : "?"} mood tag(s)`
+  );
+  check(
+    klimat && klimat.glow === true,
+    "active mood tags carry the glow effect (box-shadow)"
+  );
+  check(
+    klimat && klimat.wordsBox === true && klimat.spark === true,
+    "klimat word chips shown and a context-aware spark was rolled"
+  );
+
+  // Insertion still works: a klimat word chip inserts the word, a spark
+  // card click inserts the prompt. The chip test runs FIRST, while the klimat
+  // rolled above is still active (chips only render with ≥1 active mood).
+  const beforeWord = await cdp.evaluate(`document.querySelector('textarea').value.length`);
+  const klimatWord = await cdp.evaluate(`(() => {
+    const chip = document.querySelector('[data-klimat-word]');
+    return chip ? chip.textContent.trim() : null;
+  })()`);
+  if (klimatWord) {
+    check(await cdp.evaluate(`(() => { const el = document.querySelector('[data-klimat-word]'); if (!el) return false; el.click(); return true; })()`), "clicked a klimat word chip");
+    await sleep(250);
+    check(
+      await cdp.evaluate(`(() => {
+        const v = document.querySelector('textarea').value;
+        return v.length > ${beforeWord} && v.includes(${JSON.stringify(klimatWord)});
+      })()`),
+      "klimat word chip inserts its word into the editor"
+    );
+  } else {
+    check(true, "klimat word chip not present (no active mood) — skipped");
+  }
+
+  // Manual mood toggling (multi-select) still works. Click by data-mood-tag
+  // (not text) — a klimat-tailored spark's label may also contain „Mrok”.
+  // Normalize first: the klimat roll above is random, so „Mrok” may already
+  // be active — the toggle test must start from a known (inactive) state.
+  await cdp.evaluate(`(() => {
+    const b = document.querySelector('[data-mood-tag="🌑 Mrok"]');
+    if (b && b.dataset.moodActive === 'true') b.click();
+    return true;
+  })()`);
+  await sleep(200);
+  const mrokSelector = `(() => { const b = document.querySelector('[data-mood-tag="🌑 Mrok"]'); if (!b) return false; b.click(); return true; })()`;
+  check(await cdp.evaluate(mrokSelector), "clicked „🌑 Mrok” mood tag (data selector)");
+  await sleep(200);
+  check(
+    await cdp.evaluate(`(() => {
+      const b = [...document.querySelectorAll('[data-mood-tag]')].find(x => x.textContent.includes('Mrok'));
+      return b && b.dataset.moodActive === 'true';
+    })()`),
+    "manually toggled „🌑 Mrok” mood tag on"
+  );
+  check(await cdp.evaluate(mrokSelector), "clicked „🌑 Mrok” again");
+  await sleep(200);
+  check(
+    await cdp.evaluate(`(() => {
+      const b = [...document.querySelectorAll('[data-mood-tag]')].find(x => x.textContent.includes('Mrok'));
+      return b && b.dataset.moodActive === 'false';
+    })()`),
+    "clicking „🌑 Mrok” again toggles it off"
+  );
+
+  // Spark card insertion (independent of the mood state).
+  check(await cdp.clickText("Losuj Iskrę"), "rolled a spark before insertion test");
+  await sleep(250);
+  const sparkQuote = await cdp.evaluate(`(() => {
+    const card = document.querySelector('[data-spark-card]');
+    return card ? card.querySelectorAll('p')[1].textContent.replace(/^“|”$/g, '') : null;
+  })()`);
+  check(await cdp.evaluate(`(() => { const el = document.querySelector('[data-spark-card]'); if (!el) return false; el.click(); return true; })()`), "clicked the spark card");
+  await sleep(250);
+  check(
+    await cdp.evaluate(`(() => {
+      const v = document.querySelector('textarea').value;
+      return ${JSON.stringify(sparkQuote)} !== null && v.includes(${JSON.stringify((sparkQuote || "").slice(0, 24))});
+    })()`),
+    "clicking the spark card inserts its text into the editor"
+  );
+
+  // ── Undo/redo history: typing bursts + programmatic insertions ──
+  const baseText = "Pierwsza linia\nDruga linia";
+  check(await cdp.setTextarea(baseText), "set editor to a known base state");
+  // Wait past the 800 ms typing-merge window so the burst below starts its
+  // OWN undo transaction (otherwise it would merge with the set and Ctrl+Z
+  // would jump past the base state).
+  await sleep(900);
+  const keydown = (key, ctrl, shift) => cdp.evaluate(`(() => {
+    const ta = document.querySelector('textarea');
+    if (!ta) return false;
+    ta.dispatchEvent(new KeyboardEvent('keydown', { key: '${key}', ctrlKey: ${ctrl}, shiftKey: ${shift}, bubbles: true, cancelable: true }));
+    return true;
+  })()`);
+  const editorText = () => cdp.evaluate(`document.querySelector('textarea').value`);
+
+  // A typing burst (3 input events in one tick) = ONE undo step.
+  check(
+    await cdp.evaluate(`(() => {
+      const ta = document.querySelector('textarea');
+      const setter = Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value').set;
+      for (const ch of ['A', 'B', 'C']) {
+        setter.call(ta, ta.value + ch);
+        ta.dispatchEvent(new Event('input', { bubbles: true }));
+      }
+      return true;
+    })()`),
+    "typed a 3-character burst (A, B, C)"
+  );
+  await sleep(200);
+  check((await editorText()) === baseText + "ABC", `burst landed in the editor (got ${(await editorText()).slice(-12)})`);
+  check(await keydown("z", true, false), "dispatched Ctrl+Z");
+  await sleep(200);
+  check(
+    (await editorText()) === baseText,
+    `Ctrl+Z removes the whole typing burst in one step (got ${JSON.stringify((await editorText()).slice(-20))})`
+  );
+  check(await keydown("y", true, false), "dispatched Ctrl+Y");
+  await sleep(200);
+  check((await editorText()) === baseText + "ABC", "Ctrl+Y redoes the burst");
+
+  // A programmatic „Iskra” insertion is an INDEPENDENT transaction: Ctrl+Z
+  // right after it restores the precise pre-insertion state.
+  check(await cdp.clickText("Losuj Iskrę"), "rolled an iskra for the undo test");
+  await sleep(250);
+  const undoSparkQuote = await cdp.evaluate(`(() => {
+    const card = document.querySelector('[data-spark-card]');
+    return card ? card.querySelectorAll('p')[1].textContent.replace(/^“|”$/g, '') : null;
+  })()`);
+  check(await cdp.evaluate(`(() => { const el = document.querySelector('[data-spark-card]'); if (!el) return false; el.click(); return true; })()`), "clicked the spark card to insert it");
+  await sleep(250);
+  const afterInsert = await editorText();
+  check(
+    undoSparkQuote !== null && afterInsert.includes(undoSparkQuote.slice(0, 20)),
+    "iskra text inserted into the editor"
+  );
+  check(await keydown("z", true, false), "dispatched Ctrl+Z after the insertion");
+  await sleep(250);
+  const afterUndo = await editorText();
+  check(
+    afterUndo === baseText + "ABC",
+    `Ctrl+Z after „Losuj Iskrę” removes exactly the inserted text (got ${JSON.stringify(afterUndo.slice(-24))})`
+  );
+  check(await keydown("z", true, true), "dispatched Ctrl+Shift+Z");
+  await sleep(250);
+  check(
+    (await editorText()) === afterInsert,
+    "Ctrl+Shift+Z re-applies the inserted iskra"
+  );
+  check(await keydown("z", true, false), "dispatched Ctrl+Z again");
+  await sleep(200);
+  check((await editorText()) === baseText + "ABC", "Ctrl+Z again removes the iskra (stack stays consistent)");
 
   const manyLines = Array.from({ length: 60 }, (_, i) => `Wers numer ${i + 1} siedzi na górze jak kura`).join("\n");
   await cdp.setTextarea(manyLines);
@@ -3006,6 +5434,16 @@ try {
   await scenarioCoverArt(cdp, appUrl);
   await scenarioProfile(cdp, appUrl);
   await scenarioTrackArchive(cdp, appUrl);
+  await scenarioRecordings(cdp, appUrl);
+  await scenarioBudget(cdp, appUrl);
+  await scenarioStemMixer(cdp, appUrl);
+  await scenarioPwa(cdp, appUrl);
+  await scenarioSweepRecordings(cdp, appUrl);
+  await scenarioInstallPrompt(cdp, appUrl);
+  await scenarioStemUpload(cdp, appUrl);
+  await scenarioAcademy(cdp, appUrl);
+  await scenarioEditBeat(cdp, appUrl);
+  await scenarioCreateCypher(cdp, appUrl);
 } catch (err) {
   runFailed = true;
   console.error(`\n✗ Test run aborted: ${err.message}`);

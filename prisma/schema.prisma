@@ -71,11 +71,16 @@ model Beat {
   isStems     Boolean  @default(false)
   stemsData   String? // JSON: {drums: path, bass: path, melody: path, vocals: path}
   coverUrl    String?
+  // Last time this beat was actually played/used (dashboard mini-player,
+  // /beats playback or the Studio deep-link) — drives the „Ostatnio Użyte”
+  // dashboard widget. Null = never played.
+  lastPlayedAt DateTime?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([bpm])
   @@index([genre])
+  @@index([lastPlayedAt])
 }
 
 // A project saved from the Studio into „Gotowe Numery” — the FULL editable
@@ -90,6 +95,25 @@ model SavedProject {
   updatedAt DateTime @updatedAt
 
   @@index([title])
+}
+
+// ─── RECORDINGS (STUDIO TAKES) ───────────────────────────────────────
+// Durable audio files uploaded from the Studio (vocal takes). The audio bytes
+// live on disk under uploads/recordings/; this table is the DB-primary index
+// (takeId → file) so projects restored in ANY browser can fetch the audio back
+// from /api/recordings/<takeId>.
+model Recording {
+  id        String   @id @default(cuid())
+  // Stable client-generated id of the take inside a Studio session.
+  takeId    String   @unique
+  // On-disk filename under uploads/recordings/.
+  fileName  String
+  mimeType  String   @default("audio/webm")
+  duration  Float?
+  size      Int?
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
 }
 
 // ─── COVER ART ───────────────────────────────────────────────────────
@@ -121,8 +145,6 @@ model CommunityPost {
   content     String
   authorName  String   @default("Anonymous")
   authorAvatar String?
-  isFeatured  Boolean  @default(false)
-  viewCount   Int      @default(0)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
@@ -131,7 +153,6 @@ model CommunityPost {
   comments    Comment[]
 
   @@index([createdAt])
-  @@index([isFeatured])
 }
 
 model Rating {
@@ -187,6 +208,7 @@ model ChallengeSubmission {
   title       String
   content     String
   voteCount   Int      @default(0)
+  voters      String? // JSON: anonymous voter ids that already voted (dedup)
   lyricsId    String?
   createdAt   DateTime @default(now())
 

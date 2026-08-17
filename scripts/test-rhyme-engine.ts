@@ -4,8 +4,10 @@
 
 import {
   classifyRhyme,
+  detectRhymeClusters,
   detectRhymeGroups,
   detectLineRhymeTypes,
+  detectRhymeWords,
   findRhymes,
   type RhymeType,
 } from "../src/lib/rhyme-engine";
@@ -60,6 +62,14 @@ expectType(classifyRhyme("las", "pas"), "exact", '"las" ↔ "pas" is exact');
 expectType(classifyRhyme("kot", "bot"), "exact", '"kot" ↔ "bot" is exact');
 expectType(classifyRhyme("szybko", "nisko"), "assonance", '"szybko" ↔ "nisko" rhymes (assonance — [pkɔ]/[skɔ])');
 expectType(classifyRhyme("deszcz", "jeszcze"), "assonance", '"deszcz" ↔ "jeszcze" rhymes (assonance)');
+
+// Near-rhymes / contextual rhymes the user asked for.
+expectType(classifyRhyme("dziwny", "inni"), "assonance", '"dziwny" ↔ "inni" rhymes (assonance — shared [i,i] skeleton)');
+expectType(classifyRhyme("dziwny", "inny"), "exact", '"dziwny" ↔ "inny" is exact');
+// Feminine near-rhyme: stressed vowel matches, consonant skeleton nearly
+// identical, final vowel differs (classic rap assonance, e.g. -ice/-icji).
+expectType(classifyRhyme("ulice", "milicji"), "assonance", '"ulice" ↔ "milicji" rhymes (feminine assonance -ice/-icji)');
+expectType(classifyRhyme("głowy", "nowi"), "assonance", '"głowy" ↔ "nowi" rhymes (assonance — [o,i] skeleton)');
 
 // Non-rhymes stay null.
 expectType(classifyRhyme("samochód", "mikrofon"), null, '"samochód" ↔ "mikrofon" do not rhyme');
@@ -153,6 +163,132 @@ assert(
   detectLineRhymeTypes(withBlank).size === 2 &&
     detectLineRhymeTypes(withBlank).get(1) === undefined,
   "blank lines are skipped by the type detector"
+);
+
+// Group maps are keyed by RAW line index (blank lines included) so the UI
+// can look colors up per raw editor line and stay 1:1 with „Analiza Wersów”.
+const blankBetween = ["On jest dziwny", "", "Nikt nie jest inny"];
+const blankGroups = detectRhymeGroups(blankBetween);
+assert(
+  blankGroups.get(0) !== undefined && blankGroups.get(2) !== undefined &&
+    blankGroups.get(0) === blankGroups.get(2) &&
+    blankGroups.get(1) === undefined,
+  "group map keys are raw line indexes (blank line 1 stays ungrouped, 0 and 2 share a color)"
+);
+
+// The user's exact example groups as a shared rhyme group in line context.
+const userPair = ["On jest dziwny jak nikt", "Każdy wers niesie inni"];
+const userPairGroups = detectRhymeGroups(userPair);
+assert(
+  userPairGroups.get(0) !== undefined && userPairGroups.get(0) === userPairGroups.get(1),
+  '"…dziwny" ↔ "…inni" lines share a rhyme group'
+);
+
+// ─── 3c. Rhyme anchor words (word-level editor highlight) ───────────────
+
+console.log("\n3c. detectRhymeWords (word-level highlight anchors)");
+
+const anchorLines = ["On jest jakiś dziwny", "Nikt nie jest taki inni", "", "Mówi o ludziach"];
+const anchors = detectRhymeWords(anchorLines);
+assert(anchors.size === 3, "every non-blank line yields a rhyme anchor word");
+assert(
+  anchors.get(0)?.word === "dziwny" && anchors.get(0)?.index === 3,
+  'line 0 anchor is "dziwny" at token index 3 (got ' + JSON.stringify(anchors.get(0)) + ")"
+);
+assert(
+  anchors.get(1)?.word === "inni" && anchors.get(1)?.index === 4,
+  'line 1 anchor is "inni" at token index 4'
+);
+assert(anchors.get(2) === undefined, "blank lines produce no anchor");
+
+// Stop-word-only line falls back to the raw last token (its index).
+const stopAnchor = detectRhymeWords(["przed nią"]);
+assert(
+  stopAnchor.get(0)?.word === "nią" && stopAnchor.get(0)?.index === 1,
+  "stop-word-only line falls back to the raw last token"
+);
+
+// Token indexes survive leading whitespace (trimmed split, raw walk).
+const spaced = detectRhymeWords(["   On jest jakiś dziwny"]);
+assert(
+  spaced.get(0)?.word === "dziwny" && spaced.get(0)?.index === 3,
+  "anchor index is relative to the trimmed tokenization"
+);
+
+// ─── 3d. Word-level rhyme clusters (internal + multi-word) ─────────────
+
+console.log("\n3d. detectRhymeClusters (full-text word-level scan)");
+
+// The user's pair clusters across lines, at NON-final positions, and other
+// internal matches cluster too („jakiś/taki” mid-line, „mówi/ludzi/budzi”).
+const stanza = [
+  "On jest jakiś dziwny",
+  "Nikt nie jest taki inni",
+  "",
+  "Mówi, że pisze dla ludzi",
+  "A w nocy sam siebie budzi",
+];
+const cl = detectRhymeClusters(stanza);
+assert(cl.colors.length === 3, "stanza yields 3 word-level rhyme clusters (got " + cl.colors.length + ")");
+assert(
+  !!(cl.hits.get(0)?.some((h) => h.word === "dziwny") &&
+    cl.hits.get(1)?.some((h) => h.word === "inni")) &&
+    cl.hits.get(0)?.find((h) => h.word === "dziwny")?.color ===
+      cl.hits.get(1)?.find((h) => h.word === "inni")?.color,
+  '"dziwny" and "inni" share one cluster color (assonance)'
+);
+assert(
+  !!(cl.hits.get(0)?.some((h) => h.word === "jakiś" && h.index === 2) &&
+    cl.hits.get(1)?.some((h) => h.word === "taki" && h.index === 3)) &&
+    cl.hits.get(0)?.find((h) => h.word === "jakiś")?.color ===
+      cl.hits.get(1)?.find((h) => h.word === "taki")?.color,
+  '"jakiś" ↔ "taki" cluster mid-line (internal rhyme, same color)'
+);
+assert(
+  cl.hits.get(0)?.length === 2 && cl.hits.get(1)?.length === 2 &&
+    cl.hits.get(3)?.length === 2 && cl.hits.get(4)?.length === 1,
+  "multi-hit lines: 2 highlights on lines 0/1/3, 1 on line 4 (internal rhymes)"
+);
+assert(
+  cl.hits.get(0)![0].index < cl.hits.get(0)![1].index &&
+    cl.hits.get(3)![0].index < cl.hits.get(3)![1].index,
+  "hits on a line are ordered by token index"
+);
+assert(cl.hits.get(2) === undefined, "blank lines produce no hits");
+assert(cl.lineColors.size === 4, "4 lines carry a line color (blank skipped)");
+
+// Internal-position rhyme: matching words at token index 0 (line START),
+// not the line end — captured by the full-text scan.
+const internal = ["Płomień gaśnie w wielkim mieście", "Promień słońca w oknie płynie"];
+const cli = detectRhymeClusters(internal);
+assert(cli.colors.length >= 1, "internal fixture produces at least one cluster");
+const płomień = cli.hits.get(0)?.find((h) => h.raw === "Płomień");
+const promień = cli.hits.get(1)?.find((h) => h.raw === "Promień");
+assert(
+  płomień !== undefined && płomień.index === 0 &&
+    promień !== undefined && promień.index === 0 &&
+    płomień.color === promień.color,
+  '"Płomień" ↔ "Promień" rhyme at internal position (index 0) and share a color'
+);
+
+// Same-line internal rhyme: repeated word on one line clusters with itself.
+const sameLine = ["serce płonie jak serce"];
+const cls = detectRhymeClusters(sameLine);
+assert(
+  cls.hits.get(0)?.length === 2 &&
+    cls.hits.get(0)![0].word === "serce" && cls.hits.get(0)![1].word === "serce" &&
+    cls.hits.get(0)![0].color === cls.hits.get(0)![1].color,
+  "same-line repeated word forms an internal rhyme cluster (2 hits, one color)"
+);
+
+// Stop words and punctuation-only content never produce hits.
+assert(
+  detectRhymeClusters(["i na w", "ze pod"]).hits.size === 0,
+  "stop-word-only lines produce zero hits"
+);
+assert(
+  detectRhymeClusters([]).hits.size === 0 && detectRhymeClusters([""]).hits.size === 0,
+  "empty input produces zero hits"
 );
 
 // ─── 4. findRhymes ─────────────────────────────────────────────────────

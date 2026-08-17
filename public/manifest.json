@@ -3,6 +3,7 @@
   "short_name": "FlowForge",
   "description": "Nowoczesna aplikacja dla raperów i producentów muzycznych. Pisanie tekstów, nagrywanie, mikser i społeczność.",
   "start_url": "/",
+  "id": "/",
   "display": "standalone",
   "background_color": "#09090b",
   "theme_color": "#f59e0b",

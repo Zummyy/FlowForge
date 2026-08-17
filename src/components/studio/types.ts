@@ -46,7 +46,7 @@ export type TrimEdge = "start" | "end";
 
 // ─── Saved project (Studio → „Gotowe Numery” library) ──────────────────────
 
-/** Serializable snapshot of a take (no Blob/URL — those die with the session). */
+/** Serializable snapshot of a take (no Blob/object URL — those die with the session). */
 export interface SavedTakeState {
   id: string;
   label: string;
@@ -57,6 +57,8 @@ export interface SavedTakeState {
   isSoloed: boolean;
   trimStart: number;
   trimEnd: number;
+  /** Server URL of the uploaded recording — /api/recordings/<takeId>. */
+  audioUrl?: string;
 }
 
 /** Serializable snapshot of one timeline clip. */

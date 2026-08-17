@@ -20,21 +20,14 @@ export async function createPost(data: {
   });
 }
 
-export async function getFeedPosts(options?: {
-  limit?: number;
-  offset?: number;
-  sortBy?: "newest" | "popular" | "top-rated";
-}) {
+export async function getFeedPosts() {
   const posts = await prisma.communityPost.findMany({
     include: {
       ratings: true,
       comments: { orderBy: { createdAt: "asc" } },
     },
-    orderBy: options?.sortBy === "popular"
-      ? { viewCount: "desc" }
-      : { createdAt: "desc" },
-    take: options?.limit || 20,
-    skip: options?.offset || 0,
+    orderBy: { createdAt: "desc" },
+    take: 20,
   });
 
   return posts.map((post) => ({
@@ -44,28 +37,4 @@ export async function getFeedPosts(options?: {
       : 0,
     ratingCount: post.ratings.length,
   }));
-}
-
-export async function getPost(postId: string) {
-  return prisma.communityPost.findUnique({
-    where: { id: postId },
-    include: {
-      ratings: true,
-      comments: { orderBy: { createdAt: "asc" } },
-    },
-  });
-}
-
-export async function incrementViewCount(postId: string) {
-  return prisma.communityPost.update({
-    where: { id: postId },
-    data: { viewCount: { increment: 1 } },
-  });
-}
-
-export async function toggleFeatured(postId: string, isFeatured: boolean) {
-  return prisma.communityPost.update({
-    where: { id: postId },
-    data: { isFeatured },
-  });
 }

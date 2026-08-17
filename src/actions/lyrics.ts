@@ -2,7 +2,6 @@
 
 import { prisma } from "@/lib/prisma";
 import { MAX_ACTIVE_VERSIONS_PER_LYRIC } from "@/lib/lyric-versions";
-import { awardPoints } from "./achievements";
 
 // ─── Lyrics CRUD ──────────────────────────────────────────────────────
 
@@ -93,6 +92,44 @@ export async function deleteLyric(id: string) {
   return prisma.lyric.delete({ where: { id } });
 }
 
+// ─── Publish / share (Lyric.status = "published" + isPublic) ──────────
+// Completes the publish story: a published track is public and gets a share
+// link (/feed?shared=<id>) rendered by the Feed page.
+
+export async function publishLyric(id: string) {
+  return prisma.lyric.update({
+    where: { id },
+    data: { status: "published", isPublic: true },
+  });
+}
+
+export async function unpublishLyric(id: string) {
+  return prisma.lyric.update({
+    where: { id },
+    data: { status: "draft", isPublic: false },
+  });
+}
+
+/**
+ * A lyric that was actually published (isPublic) — used by the Feed page's
+ * /feed?shared=<id> view. Anything not public returns null, so unpublished
+ * or archived tracks can never be shared by guessing an id.
+ */
+export async function getPublicLyric(id: string) {
+  const lyric = await prisma.lyric.findUnique({ where: { id } });
+  if (!lyric || !lyric.isPublic) return null;
+  return {
+    id: lyric.id,
+    title: lyric.title,
+    content: lyric.content,
+    lineCount: lyric.lineCount ?? 0,
+    verseCount: lyric.verseCount ?? 0,
+    syllableCount: lyric.syllableCount ?? 0,
+    wordCount: lyric.wordCount ?? 0,
+    publishedAt: lyric.updatedAt.toISOString(),
+  };
+}
+
 // ─── Dashboard: Recently Edited ───────────────────────────────────────
 
 export async function getRecentLyrics(limit = 5) {
@@ -112,6 +149,46 @@ export async function getRecentLyrics(limit = 5) {
       _count: { select: { versions: { where: { archivedAt: null } } } },
     },
   });
+}
+
+// ─── Dashboard: writing activity chart ───────────────────────────────
+// Day buckets over the last `days` calendar days (server-local time):
+// syllables written + versions saved per day, zeros included so the client
+// can render a gap-free bar chart. `days` is clamped to 1..90.
+export async function getWritingActivity(days: number) {
+  const count = Math.max(1, Math.min(90, Math.floor(days)));
+  const start = new Date();
+  start.setHours(0, 0, 0, 0);
+  start.setDate(start.getDate() - (count - 1));
+
+  const rows = await prisma.lyricVersion.findMany({
+    where: { createdAt: { gte: start } },
+    select: { createdAt: true, syllableCount: true },
+  });
+
+  const buckets = new Map<string, { syllables: number; versions: number }>();
+  for (let i = 0; i < count; i++) {
+    const d = new Date(start);
+    d.setDate(start.getDate() + i);
+    buckets.set(localDateKey(d), { syllables: 0, versions: 0 });
+  }
+  for (const r of rows) {
+    const key = localDateKey(r.createdAt);
+    const b = buckets.get(key);
+    if (b) {
+      b.syllables += r.syllableCount ?? 0;
+      b.versions += 1;
+    }
+  }
+  return Array.from(buckets, ([date, v]) => ({ date, syllables: v.syllables, versions: v.versions }));
+}
+
+/** "YYYY-MM-DD" in the server's local timezone — the bucket key. */
+function localDateKey(d: Date): string {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, "0");
+  const day = String(d.getDate()).padStart(2, "0");
+  return `${y}-${m}-${day}`;
 }
 
 // ─── Lyric Versions ──────────────────────────────────────────────────
@@ -219,38 +296,8 @@ export async function purgeArchivedLyricVersions(lyricId: string) {
   });
 }
 
-export async function getLyricVersions(lyricId: string) {
-  return prisma.lyricVersion.findMany({
-    where: { lyricId },
-    orderBy: { createdAt: "desc" },
-  });
-}
-
 export async function deleteLyricVersion(id: string) {
   return prisma.lyricVersion.delete({ where: { id } });
-}
-
-// ─── Publish to Feed ──────────────────────────────────────────────────
-
-export async function publishToFeed(data: {
-  lyricId?: string;
-  title: string;
-  content: string;
-  authorName?: string;
-}) {
-  const post = await prisma.communityPost.create({
-    data: {
-      lyricId: data.lyricId,
-      title: data.title,
-      content: data.content,
-      authorName: data.authorName || "Anonymous",
-    },
-  });
-
-  // Award points for publishing
-  await awardPoints("community-star", "Gwiazda Społeczności", "⭐", "Opublikuj tekst na Ścianie Raperów", 15);
-
-  return post;
 }
 
 // ─── Ratings ──────────────────────────────────────────────────────────
@@ -281,12 +328,5 @@ export async function addComment(postId: string, content: string, authorName?: s
       content,
       authorName: authorName || "Anonymous",
     },
-  });
-}
-
-export async function getPostComments(postId: string) {
-  return prisma.comment.findMany({
-    where: { postId },
-    orderBy: { createdAt: "asc" },
   });
 }

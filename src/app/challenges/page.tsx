@@ -13,16 +13,77 @@ import {
 } from "@/lib/challenges";
 import type { ChallengeState } from "@/lib/challenges";
 import {
+  createChallenge,
   getActiveChallenges,
   getChallengeProgress as getChallengeProgressDb,
   saveChallengeProgress,
+  voteSubmission,
 } from "@/actions/challenges";
 import { tryDbWrite } from "@/lib/db-sync";
 import { awardPoints, deleteAchievement } from "@/actions/achievements";
+import { useToast } from "@/components/studio/useToast";
+import { ToastView } from "@/components/studio/ToastView";
+
+/**
+ * Stable anonymous id for this browser — used by the cypher voting dedup
+ * (one vote per submission per browser; the ids live in the DB `voters`
+ * column). Generated once and persisted in localStorage.
+ */
+function getOrCreateVoterId(): string {
+  if (typeof localStorage === "undefined") return "anon";
+  let id = localStorage.getItem("flowforge-voter-id");
+  if (!id) {
+    id = `voter-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+    try {
+      localStorage.setItem("flowforge-voter-id", id);
+    } catch {
+      /* storage full/unavailable — the id still works for this session */
+    }
+  }
+  return id;
+}
+
+/** Parse a submission's voters JSON column. */
+function parseVoters(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
 
 export default function ChallengesPage() {
   const [state, setState] = useState<ChallengeState | null>(null);
   const [cyphers, setCyphers] = useState<Awaited<ReturnType<typeof getActiveChallenges>>>([]);
+  // Submission ids this browser already voted on (from the DB voters column)
+  // — locks the ▲ buttons and prevents re-clicking.
+  const [votedIds, setVotedIds] = useState<Set<string>>(new Set());
+  // „+ Nowy Cypher” form state (DB-primary — createChallenge + reload).
+  const [createOpen, setCreateOpen] = useState(false);
+  const [createForm, setCreateForm] = useState({ title: "", description: "", prize: "", endDate: "" });
+  const [creating, setCreating] = useState(false);
+  const { toast, showToast } = useToast();
+
+  /** Reload the community cyphers + re-derive the voted-submission locks. */
+  const reloadCyphers = useCallback(() => {
+    getActiveChallenges()
+      .then((rows) => {
+        setCyphers(rows);
+        const voterId = getOrCreateVoterId();
+        const voted = new Set<string>();
+        for (const c of rows) {
+          for (const s of c.submissions) {
+            if (parseVoters(s.voters).includes(voterId)) voted.add(s.id);
+          }
+        }
+        setVotedIds(voted);
+      })
+      .catch(() => {
+        /* DB unavailable — the section stays hidden */
+      });
+  }, []);
   // badgeIds already pushed to the DB profile (awardPoints is idempotent, but
   // this avoids re-issuing the server call on every refresh).
   const syncedRef = useRef<Set<string>>(new Set());
@@ -71,13 +132,8 @@ export default function ChallengesPage() {
     // Refresh live when any page updates the challenge store — the mirror is
     // kept in sync by recordChallengeEvent, so re-reading it stays correct.
     // Community cyphers — the seeded Challenge rows with deadlines + votes.
-    getActiveChallenges()
-      .then((rows) => {
-        if (!cancelled) setCyphers(rows);
-      })
-      .catch(() => {
-        /* DB unavailable — the section stays hidden */
-      });
+    // Also lock the ▲ buttons for submissions this voter already voted on.
+    reloadCyphers();
 
     const onUpdate = () => refresh();
     const onStorage = (e: StorageEvent) => {
@@ -90,12 +146,51 @@ export default function ChallengesPage() {
       window.removeEventListener("flowforge-challenges-updated", onUpdate);
       window.removeEventListener("storage", onStorage);
     };
-  }, [refresh]);
+  }, [refresh, reloadCyphers]);
 
   // Sync every newly completed challenge to the DB once the state settles.
   useEffect(() => {
     if (state) syncToDb(state);
   }, [state, syncToDb]);
+
+  /**
+   * Create a new community cypher (DB-primary). Title + a future deadline
+   * are required; the list reloads so the new card renders immediately.
+   */
+  const handleCreate = useCallback(async () => {
+    const title = createForm.title.trim();
+    if (!title) {
+      showToast("⚠️ Tytuł cypheru jest wymagany", "info");
+      return;
+    }
+    // End-of-day so „today” still counts as a valid deadline.
+    const endDate = new Date(`${createForm.endDate}T23:59:59`);
+    if (!createForm.endDate || isNaN(endDate.getTime())) {
+      showToast("⚠️ Podaj datę zakończenia", "info");
+      return;
+    }
+    if (endDate.getTime() <= Date.now()) {
+      showToast("⚠️ Data musi być w przyszłości", "info");
+      return;
+    }
+    setCreating(true);
+    try {
+      await createChallenge({
+        title,
+        description: createForm.description.trim() || "Nowy cypher społecznościowy",
+        prize: createForm.prize.trim() || undefined,
+        endDate,
+      });
+      setCreateOpen(false);
+      setCreateForm({ title: "", description: "", prize: "", endDate: "" });
+      reloadCyphers();
+      showToast(`⚔️ Utworzono cypher: ${title}`, "success");
+    } catch {
+      showToast("⚠️ Nie udało się utworzyć cypheru", "info");
+    } finally {
+      setCreating(false);
+    }
+  }, [createForm, reloadCyphers, showToast]);
 
   const onReset = useCallback(async () => {
     await resetChallengeProgress();
@@ -107,6 +202,38 @@ export default function ChallengesPage() {
     }
     refresh();
   }, [refresh]);
+
+  /**
+   * Vote for a cypher submission. DB-primary: the server dedups by the
+   * browser's anonymous voter id (one vote per submission), so the button
+   * locks on success — and also locks when the server reports the vote was
+   * already cast (e.g. another tab got there first).
+   */
+  const handleVote = useCallback(
+    async (submissionId: string, title: string) => {
+      if (votedIds.has(submissionId)) return;
+      const voterId = getOrCreateVoterId();
+      try {
+        const res = await voteSubmission(submissionId, voterId);
+        setVotedIds((prev) => new Set(prev).add(submissionId));
+        if (res.ok) {
+          setCyphers((prev) =>
+            prev.map((c) => ({
+              ...c,
+              submissions: c.submissions.map((s) =>
+                s.id === submissionId ? { ...s, voteCount: res.voteCount } : s
+              ),
+            }))
+          );
+          showToast(`▲ Oddano głos na „${title}”`, "success");
+        }
+        // alreadyVoted → the DB count is authoritative; just lock the button.
+      } catch {
+        showToast("⚠️ Nie udało się oddać głosu", "info");
+      }
+    },
+    [votedIds, showToast]
+  );
 
   if (!state) {
     return (
@@ -124,6 +251,9 @@ export default function ChallengesPage() {
 
   return (
     <AppShell>
+      {/* Toast notification — the page's actions (voting, create) report
+          through it; without ToastView the messages would never render. */}
+      <ToastView toast={toast} />
       <div className="space-y-6 animate-fade-in">
         {/* Header */}
         <div className="flex items-center justify-between flex-wrap gap-4">
@@ -249,14 +379,39 @@ export default function ChallengesPage() {
         </div>
 
         {/* Community cyphers — active challenges with deadlines + votes */}
-        {cyphers.length > 0 && (
-          <div>
-            <div className="flex items-center justify-between mb-4">
+        <div>
+          <div className="flex items-center justify-between mb-4 flex-wrap gap-3">
+            <div className="flex items-center gap-2">
               <h2 className="text-lg font-semibold text-white flex items-center gap-2">
                 <span className="text-purple-500">⚔️</span> Aktywne Cyphery
               </h2>
               <p className="text-[10px] text-zinc-500 uppercase tracking-wider font-medium">Społeczność</p>
             </div>
+            <button
+              data-create-open
+              onClick={() => setCreateOpen(true)}
+              className="px-3 py-1.5 rounded-lg bg-purple-500/10 text-purple-400 text-xs font-medium hover:bg-purple-500/20 transition-colors"
+              title="Utwórz nowy cypher z własnym deadline'em"
+            >
+              + Nowy Cypher
+            </button>
+          </div>
+          {cyphers.length === 0 ? (
+            <div className="rounded-2xl bg-zinc-900/50 border border-dashed border-purple-500/30 p-10 text-center">
+              <span className="text-3xl block mb-3">⚔️</span>
+              <h3 className="text-sm font-semibold text-white mb-1">Brak aktywnych cypherów</h3>
+              <p className="text-xs text-zinc-500 max-w-md mx-auto mb-4">
+                Utwórz pierwszy cypher z własnym tematem i deadline'em — społeczność będzie mogła zgłaszać wersy i głosować.
+              </p>
+              <button
+                data-create-open
+                onClick={() => setCreateOpen(true)}
+                className="px-4 py-2 rounded-xl bg-purple-500/15 text-purple-300 text-sm font-semibold hover:bg-purple-500/25 transition-colors"
+              >
+                + Utwórz pierwszy cypher
+              </button>
+            </div>
+          ) : (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {cyphers.map((c) => {
                 const daysLeft = Math.max(
@@ -296,7 +451,25 @@ export default function ChallengesPage() {
                                 <p className="text-xs text-zinc-200 font-medium truncate">{s.title}</p>
                                 <p className="text-[10px] text-zinc-500 truncate">{s.authorName}</p>
                               </div>
-                              <span className="text-[11px] font-mono text-amber-400 shrink-0">▲ {s.voteCount}</span>
+                              {(() => {
+                                const voted = votedIds.has(s.id);
+                                return (
+                                  <button
+                                    data-vote-btn={s.id}
+                                    data-voted={voted ? "true" : undefined}
+                                    onClick={() => handleVote(s.id, s.title)}
+                                    disabled={voted}
+                                    className={`flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-mono transition-colors shrink-0 ${
+                                      voted
+                                        ? "bg-emerald-500/15 text-emerald-400 cursor-default"
+                                        : "bg-amber-500/10 text-amber-400 hover:bg-amber-500/20"
+                                    }`}
+                                    title={voted ? "Oddałeś już głos" : "Głosuj na to zgłoszenie"}
+                                  >
+                                    {voted ? "✓" : "▲"} {s.voteCount}
+                                  </button>
+                                );
+                              })()}
                             </li>
                           ))}
                         </ul>
@@ -308,8 +481,8 @@ export default function ChallengesPage() {
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
 
         {/* How It Works */}
         <div className="rounded-2xl bg-zinc-900/50 border border-zinc-800/50 p-6">
@@ -333,6 +506,87 @@ export default function ChallengesPage() {
           </div>
         </div>
       </div>
+
+      {/* ── New cypher modal: title / description / prize / deadline ── */}
+      {createOpen && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 p-4"
+          onClick={() => !creating && setCreateOpen(false)}
+          data-create-modal
+        >
+          <div
+            className="w-full max-w-md rounded-2xl bg-zinc-900 border border-zinc-800/50 p-5 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between mb-4">
+              <h3 className="text-lg font-bold text-white">⚔️ Nowy Cypher</h3>
+              <button
+                onClick={() => !creating && setCreateOpen(false)}
+                disabled={creating}
+                className="w-8 h-8 rounded-lg bg-zinc-800 text-zinc-400 hover:bg-zinc-700 flex items-center justify-center transition-colors disabled:opacity-40"
+                title="Zamknij"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block">
+                <span className="text-xs text-zinc-400 mb-1 block">Tytuł *</span>
+                <input
+                  type="text"
+                  data-create-field="title"
+                  value={createForm.title}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, title: e.target.value }))}
+                  placeholder="np. Cypher: Szept Miasta"
+                  className="w-full px-3 py-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700/40 text-white text-sm placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/30"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-zinc-400 mb-1 block">Opis</span>
+                <textarea
+                  data-create-field="description"
+                  value={createForm.description}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, description: e.target.value }))}
+                  placeholder="Temat, zasady, klimat cypheru…"
+                  rows={3}
+                  className="w-full px-3 py-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700/40 text-white text-sm placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/30 resize-none"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-zinc-400 mb-1 block">🎁 Nagroda</span>
+                <input
+                  type="text"
+                  data-create-field="prize"
+                  value={createForm.prize}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, prize: e.target.value }))}
+                  placeholder="np. Wyróżnienie na feedzie"
+                  className="w-full px-3 py-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700/40 text-white text-sm placeholder:text-zinc-600 focus:outline-none focus:border-purple-500/30"
+                />
+              </label>
+              <label className="block">
+                <span className="text-xs text-zinc-400 mb-1 block">Data zakończenia *</span>
+                <input
+                  type="date"
+                  data-create-field="endDate"
+                  value={createForm.endDate}
+                  onChange={(e) => setCreateForm((f) => ({ ...f, endDate: e.target.value }))}
+                  className="w-full px-3 py-2.5 rounded-xl bg-zinc-800/50 border border-zinc-700/40 text-white text-sm focus:outline-none focus:border-purple-500/30 [color-scheme:dark]"
+                />
+              </label>
+
+              <button
+                onClick={handleCreate}
+                disabled={creating}
+                data-create-save
+                className="w-full px-4 py-2.5 rounded-xl bg-purple-500/15 text-purple-300 text-sm font-semibold hover:bg-purple-500/25 transition-colors disabled:opacity-50"
+              >
+                {creating ? "Tworzenie…" : "⚔️ Utwórz cypher"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

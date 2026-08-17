@@ -17,6 +17,10 @@ prisma/dev.db-shm
 # Automatic db:reset backups (npm run db:backup / db:reset) — never commit.
 prisma/backups/
 
+# ── Uploaded audio (Studio take recordings) ─────────────────────────────
+# User recordings — never commit the actual audio bytes.
+uploads/
+
 # ── Logs ────────────────────────────────────────────────────────────────
 *.log
 npm-debug.log*

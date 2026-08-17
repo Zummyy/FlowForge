@@ -176,6 +176,71 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+/* ── Print / PDF export (Vault „📄 Eksportuj PDF”) ──────────────────────
+   The print area is portaled to <body>, so hiding every OTHER body child
+   leaves exactly the lyric card on paper. The browser's „Zapisz jako PDF”
+   does the rest — no server-side PDF engine. */
+#print-area {
+  display: none;
+}
+
+@media print {
+  body > *:not(#print-area) {
+    display: none !important;
+  }
+  #print-area {
+    display: block !important;
+    background: #ffffff !important;
+  }
+  #print-area .print-card {
+    max-width: 720px;
+    margin: 0 auto;
+    padding: 40px 32px;
+    color: #18181b;
+    font-family: Georgia, "Times New Roman", serif;
+  }
+  #print-area .print-meta {
+    display: flex;
+    justify-content: space-between;
+    font-size: 10px;
+    letter-spacing: 2px;
+    text-transform: uppercase;
+    color: #71717a;
+    border-bottom: 1px solid #d4d4d8;
+    padding-bottom: 8px;
+  }
+  #print-area h1 {
+    font-size: 28px;
+    margin: 16px 0;
+    color: #18181b;
+  }
+  #print-area .print-stats {
+    display: flex;
+    gap: 14px;
+    flex-wrap: wrap;
+    font-size: 11px;
+    color: #3f3f46;
+    margin-bottom: 24px;
+  }
+  #print-area pre {
+    font-family: "JetBrains Mono", ui-monospace, monospace;
+    font-size: 13px;
+    line-height: 1.8;
+    white-space: pre-wrap;
+    word-break: break-word;
+    color: #18181b;
+    margin: 0;
+  }
+  #print-area .print-footer {
+    margin-top: 28px;
+    padding-top: 8px;
+    border-top: 1px solid #d4d4d8;
+    font-size: 10px;
+    color: #71717a;
+    text-align: center;
+  }
+}
+
 /* Selection */
 ::selection {
   background: rgba(245, 158, 11, 0.3);

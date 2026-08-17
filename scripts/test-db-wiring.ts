@@ -23,19 +23,28 @@ import {
   archiveLyricVersion,
   restoreLyricVersion,
   purgeArchivedLyricVersions,
+  getWritingActivity,
+  publishLyric,
+  unpublishLyric,
+  getPublicLyric,
   ratePost,
   addComment,
 } from "../src/actions/lyrics";
 import { MAX_ACTIVE_VERSIONS_PER_LYRIC } from "../src/lib/lyric-versions";
 import { createPost, getFeedPosts } from "../src/actions/community";
-import { createExpense, getExpenses, deleteExpense } from "../src/actions/budget";
-import { awardPoints, getProfile, updateProfile, deleteAchievement } from "../src/actions/achievements";
+import { voteSubmission } from "../src/actions/challenges";
+import { createExpense, getExpenses, deleteExpense, getBudgetSummary } from "../src/actions/budget";
+import { awardPoints, getProfile, updateProfile, deleteAchievement, getDashboardStats } from "../src/actions/achievements";
 import { createBeat, getBeats, deleteBeat, saveProject, getProjects, deleteProject } from "../src/actions/beats";
 import { saveCover, getCovers, deleteCover } from "../src/actions/covers";
 import type { SavedProject } from "../src/components/studio/types";
 import { createInspiration, getInspirations } from "../src/actions/inspirations";
-import { exportLyricAsText, getExportHistory } from "../src/actions/export";
+import { exportLyricAsText, exportLyricAsPdf, getExportHistory, clearExportHistory } from "../src/actions/export";
+import { saveRecording, getRecording, deleteRecording, collectRecordingTakeIds } from "../src/lib/recordings";
 import { prisma as appPrisma } from "../src/lib/prisma";
+import path from "node:path";
+import os from "node:os";
+import { rm, access } from "node:fs/promises";
 
 const prisma = new PrismaClient();
 let passed = 0;
@@ -68,7 +77,35 @@ async function main() {
       prisma.coverArt.deleteMany(),
       prisma.lyricalInspiration.deleteMany(),
       prisma.exportLog.deleteMany(),
+      prisma.recording.deleteMany(),
     ]);
+
+    console.log("📈 Writing activity (dashboard chart)");
+    // Tables are freshly cleared above — buckets are exact. 2 versions today
+    // (10+20 sylab), 1 version 25 days ago (30 sylab).
+    const actLyric = await createLyric({ title: "Aktywność", content: "wers", lineCount: 1, syllableCount: 3, wordCount: 1 });
+    const actNow = Date.now();
+    await prisma.lyricVersion.createMany({
+      data: [
+        { lyricId: actLyric.id, content: "w1", snapshot: 1, syllableCount: 10, createdAt: new Date(actNow) },
+        { lyricId: actLyric.id, content: "w2", snapshot: 2, syllableCount: 20, createdAt: new Date(actNow - 3600e3) },
+        { lyricId: actLyric.id, content: "w3", snapshot: 3, syllableCount: 30, createdAt: new Date(actNow - 25 * 86400e3) },
+      ],
+    });
+    const act7 = await getWritingActivity(7);
+    assert(act7.length === 7, "getWritingActivity returns exactly 7 buckets for a 7-day window");
+    const act7Today = act7[act7.length - 1];
+    assert(act7Today.syllables === 30 && act7Today.versions === 2, "7-day window buckets today: 2 versions, 30 sylab");
+    assert(act7.slice(0, 6).every((d) => d.syllables === 0 && d.versions === 0), "7-day window zero-pads the empty days");
+    const act30 = await getWritingActivity(30);
+    assert(act30.length === 30, "getWritingActivity returns 30 buckets for a 30-day window");
+    const act30Total = act30.reduce((s, d) => s + d.syllables, 0);
+    const act30Versions = act30.reduce((s, d) => s + d.versions, 0);
+    assert(act30Total === 60 && act30Versions === 3, "30-day window adds the 25-day-old version (60 sylab, 3 versions total)");
+    assert(act30[act30.length - 1].versions === 2, "today's bucket still holds only the 2 today-versions");
+    const clamped = await getWritingActivity(500);
+    assert(clamped.length === 90, "the window is clamped to 90 days max");
+    await prisma.lyric.delete({ where: { id: actLyric.id } });
 
     console.log("📝 Lyrics (Vault)");
     const lyric = await createLyric({ title: "Testowy Tekst", content: "Wers pierwszy\nWers drugi", lineCount: 2, verseCount: 1, syllableCount: 8, wordCount: 4 });
@@ -88,6 +125,17 @@ async function main() {
     const afterDelete = await getLyric(lyric.id);
     assert((afterDelete?.versions.length ?? 0) === 0, "deleteLyricVersion removes the version");
 
+    // Publish flow: status "published" + isPublic + shareable read.
+    const pub = await publishLyric(lyric.id);
+    assert(pub.status === "published" && pub.isPublic === true, "publishLyric sets status=published + isPublic");
+    const shared = await getPublicLyric(lyric.id);
+    assert(shared !== null && shared.title === "Testowy Tekst", "getPublicLyric returns the published lyric");
+    assert(shared !== null && shared.content.includes("Wers pierwszy"), "getPublicLyric exposes the content for the feed card");
+    assert((await getPublicLyric("does-not-exist")) === null, "getPublicLyric returns null for unknown ids");
+    const unpub = await unpublishLyric(lyric.id);
+    assert(unpub.status === "draft" && unpub.isPublic === false, "unpublishLyric reverts to draft + private");
+    assert((await getPublicLyric(lyric.id)) === null, "an unpublished lyric is no longer shareable");
+
     console.log("📤 Export");
     const exported = await exportLyricAsText(lyric.id);
     assert(exported.includes("Testowy Tekst") && exported.includes("Statystyki") && exported.includes("Linii: 2") && exported.includes("Słów: 4"), "exportLyricAsText returns the formatted text with stats (incl. words)");
@@ -95,6 +143,17 @@ async function main() {
     assert(history.length === 1 && history[0].format === "txt", "export creates an ExportLog row seen by getExportHistory");
     const allHistory = await getExportHistory();
     assert(allHistory.length === 1, "getExportHistory without filter lists all exports");
+    const pdf = await exportLyricAsPdf(lyric.id);
+    assert(pdf.title === "Testowy Tekst" && pdf.content.includes("Wers pierwszy"), "exportLyricAsPdf returns the printable data (title + content)");
+    assert(pdf.lineCount === 2 && pdf.wordCount === 4, "exportLyricAsPdf exposes the stats for the print card");
+    const histAfterPdf = await getExportHistory(lyric.id);
+    assert(histAfterPdf.length === 2 && histAfterPdf[0].format === "pdf", "PDF export logs format \"pdf\" (newest first)");
+    // ExportLog is a real history source: the dashboard counts it + clearing works.
+    assert((await getDashboardStats()).exportCount === 2, "getDashboardStats counts ExportLog rows (txt + pdf)");
+    const cleared = await clearExportHistory(lyric.id);
+    assert(cleared === 2, "clearExportHistory wipes the track's export log");
+    assert((await getExportHistory(lyric.id)).length === 0, "export history is empty after clearing");
+    assert((await getDashboardStats()).exportCount === 0, "dashboard export count drops to 0 after clearing");
     const renamed = await updateLyric(lyric.id, { title: "Nowa nazwa" });
     assert(renamed.title === "Nowa nazwa", "updateLyric changes the title (inline rename)");
     assert((await getLyric(lyric.id))?.title === "Nowa nazwa", "the rename persists to the row");
@@ -119,6 +178,10 @@ async function main() {
     assert(!!exp.id && exp.amount === 350, "createExpense persists an expense");
     const expenses = await getExpenses({ project: "EP 2026" });
     assert(expenses.length === 1 && expenses[0].title === "Mix i mastering", "getExpenses filters by project");
+    const summary = await getBudgetSummary();
+    assert(summary.total === 350 && summary.count === 1, "getBudgetSummary rolls up total + count");
+    assert(summary.byCategory.mix_master === 350, "getBudgetSummary breaks down by category");
+    assert(summary.byProject["EP 2026"] === 350, "getBudgetSummary breaks down by project (uses .project)");
     await deleteExpense(exp.id);
     assert((await getExpenses({ project: "EP 2026" })).length === 0, "deleteExpense removes the row");
 
@@ -131,6 +194,30 @@ async function main() {
     assert(feed.length === 1, "getFeedPosts returns the post");
     assert(feed[0].rating === 5 && feed[0].ratingCount === 1, "rating rolls up into the feed post");
     assert(feed[0].comments.length === 1 && feed[0].comments[0].content === "Mocny numer!", "comment is included in the feed post");
+
+    console.log("⚔️ Cypher voting");
+    const sub = await appPrisma.challengeSubmission.create({
+      data: { challengeId: "cypher-miasto", authorName: "Raper X", title: "Zwrotka z osiedla", content: "linijka" },
+    });
+    assert(sub.voteCount === 0, "a fresh submission starts with 0 votes");
+    const vote1 = await voteSubmission(sub.id, "voter-A");
+    assert(vote1.ok === true && vote1.alreadyVoted === false && vote1.voteCount === 1, "first vote increments the count");
+    const vote2 = await voteSubmission(sub.id, "voter-A");
+    assert(vote2.ok === false && vote2.alreadyVoted === true && vote2.voteCount === 1, "the same voter cannot vote twice");
+    const vote3 = await voteSubmission(sub.id, "voter-B");
+    assert(vote3.ok === true && vote3.voteCount === 2, "a different voter can vote (count 2)");
+    const row = await appPrisma.challengeSubmission.findUnique({ where: { id: sub.id }, select: { voteCount: true, voters: true } });
+    assert(row?.voteCount === 2 && row.voters === JSON.stringify(["voter-A", "voter-B"]), "voters JSON records each voter exactly once");
+    const voteEmpty = await voteSubmission(sub.id, "  ");
+    assert(voteEmpty.ok === false && voteEmpty.alreadyVoted === true, "an empty voter id is rejected without counting");
+    let threw = false;
+    try {
+      await voteSubmission("no-such-submission", "voter-A");
+    } catch {
+      threw = true;
+    }
+    assert(threw === true, "voting for a missing submission throws");
+    await appPrisma.challengeSubmission.delete({ where: { id: sub.id } });
 
     console.log("🏅 Achievements / Profile");
     // Note: createExpense above already awarded the "manager" badge (15 pts),
@@ -154,6 +241,24 @@ async function main() {
     assert(beats.length === 1 && beats[0].title === "Moj bit", "getBeats returns the beat");
     await deleteBeat(beat.id);
     assert((await getBeats()).length === 0, "deleteBeat removes the beat");
+
+    // Stem mixer backend — isStems + stemsData (drums/bass/melody/vocals paths).
+    const stemBeat = await createBeat({
+      title: "Bit ze stemami",
+      bpm: 100,
+      isStems: true,
+      stemsData: {
+        drums: "/stems/x-drums.wav",
+        bass: "/stems/x-bass.wav",
+        melody: "/stems/x-melody.wav",
+        vocals: "/stems/x-vocals.wav",
+      },
+    });
+    assert(stemBeat.isStems === true && !!stemBeat.stemsData, "createBeat persists isStems + stemsData");
+    const stemRow = (await getBeats()).find((b) => b.id === stemBeat.id);
+    assert(!!stemRow && stemRow.isStems === true && stemRow.stemsData?.includes("/stems/x-drums.wav") === true, "getBeats returns the stems beat with all four stem paths");
+    await deleteBeat(stemBeat.id);
+    assert((await getBeats()).find((b) => b.id === stemBeat.id) === undefined, "deleteBeat removes the stems beat too");
 
     console.log("🎛️ Saved Projects (Studio library)");
     const proj: SavedProject = {
@@ -256,6 +361,111 @@ async function main() {
     assert(inps.length === 1 && inps[0].songTitle === "Jestem Bogiem", "getInspirations returns the entry");
     const withTags = await getInspirations({ limit: 1 });
     assert(withTags[0].tags === JSON.stringify(["klasyk"]), "tags serialize to JSON");
+
+    console.log("🎙️ Recordings (Studio takes)");
+    // Files go to a throwaway temp dir — never the real uploads/ folder.
+    const recDir = path.join(os.tmpdir(), `flowforge-rec-test-${Date.now()}`);
+    try {
+      await saveRecording({ takeId: "e2e-take-1", mimeType: "audio/webm", data: Buffer.from("fake-opus-bytes"), dir: recDir });
+      const rec = await getRecording("e2e-take-1", recDir);
+      assert(rec?.fileName === "e2e-take-1.webm", "saveRecording names the file <takeId>.webm");
+      const row = await prisma.recording.findUnique({ where: { takeId: "e2e-take-1" } });
+      assert(row !== null && row.mimeType === "audio/webm", "saveRecording upserts the Recording row");
+      // Re-upload the same take — idempotent (still one row, file replaced).
+      await saveRecording({ takeId: "e2e-take-1", mimeType: "audio/webm", data: Buffer.from("longer-bytes"), dir: recDir });
+      const count = await prisma.recording.count({ where: { takeId: "e2e-take-1" } });
+      assert(count === 1, "re-uploading the same take keeps a single row (upsert)");
+      const refetched = await getRecording("e2e-take-1", recDir);
+      assert(refetched?.size === 12, "getRecording resolves the replaced file size");
+      let rejected = false;
+      try {
+        await saveRecording({ takeId: "../evil", mimeType: "audio/webm", data: Buffer.from("x"), dir: recDir });
+      } catch {
+        rejected = true;
+      }
+      assert(rejected, "unsafe take ids are rejected (no path traversal)");
+      assert((await deleteRecording("no-such-take", recDir)) === false, "deleting an unknown take is a safe no-op");
+      assert((await deleteRecording("e2e-take-1", recDir)) === true, "deleteRecording removes the row");
+      const fileGone = await access(path.join(recDir, "e2e-take-1.webm"))
+        .then(() => false)
+        .catch(() => true);
+      assert(fileGone, "deleteRecording removes the file from disk");
+      assert((await prisma.recording.count()) === 0, "no Recording rows remain after delete");
+
+      // ── Project deletion prunes its takes' recordings ──
+      // collectRecordingTakeIds is pure — assert the extraction rules first.
+      const payloadWithAudios = JSON.stringify({
+        kind: "project",
+        takes: [
+          { id: "t1", audioUrl: "/api/recordings/e2e-proj-take-1" },
+          { id: "t2", audioUrl: "/api/recordings/e2e-proj-take-2" },
+          { id: "t3", audioUrl: "/api/recordings/e2e-proj-take-1" }, // dup — deduped
+          { id: "t4" }, // legacy take, no audioUrl — skipped
+          { id: "t5", audioUrl: "data:audio/webm;base64,AAAA" }, // legacy dataUrl — skipped
+        ],
+      });
+      const collected = collectRecordingTakeIds(payloadWithAudios);
+      assert(
+        collected.length === 2 &&
+          collected.includes("e2e-proj-take-1") &&
+          collected.includes("e2e-proj-take-2"),
+        "collectRecordingTakeIds extracts unique durable take ids (skips legacy dataUrl)"
+      );
+      assert(collectRecordingTakeIds(JSON.stringify({ takes: [{ id: "x" }] })).length === 0, "payload without audioUrl yields no take ids");
+      assert(collectRecordingTakeIds("{not json").length === 0, "malformed payload yields no take ids (best-effort)");
+
+      // Upload two takes, save a project referencing them, delete the project
+      // → recordings (row + file) must go with it.
+      await saveRecording({ takeId: "e2e-proj-take-1", mimeType: "audio/webm", data: Buffer.from("proj-a"), dir: recDir });
+      await saveRecording({ takeId: "e2e-proj-take-2", mimeType: "audio/webm", data: Buffer.from("proj-b"), dir: recDir });
+      const projWithTakes: SavedProject = {
+        kind: "project",
+        id: "proj-rec-cleanup",
+        title: "Projekt z nagraniami",
+        artist: "Studio",
+        genre: "rap",
+        duration: "2:00",
+        beatName: "Bit",
+        beatVolume: 0.8,
+        teleprompterText: "",
+        teleprompterSpeed: 5,
+        takes: [
+          { id: "t1", label: "Wokal 1", duration: 8, offset: 0, volume: 1, isMuted: false, isSoloed: false, trimStart: 0, trimEnd: 1, audioUrl: "/api/recordings/e2e-proj-take-1" },
+          { id: "t2", label: "Wokal 2", duration: 8, offset: 0, volume: 1, isMuted: false, isSoloed: false, trimStart: 0, trimEnd: 1, audioUrl: "/api/recordings/e2e-proj-take-2" },
+        ],
+        clips: [],
+        savedAt: new Date().toISOString(),
+      };
+      const projSaved = await saveProject(projWithTakes);
+      assert((await prisma.recording.count()) === 2, "two recordings exist before the project delete");
+      await deleteProject(projSaved.id, recDir);
+      assert((await getProjects()).length === 0, "deleteProject removes the project row");
+      assert((await prisma.recording.count()) === 0, "deleteProject prunes the project's Recording rows");
+      const projFileGone = await access(path.join(recDir, "e2e-proj-take-1.webm"))
+        .then(() => false)
+        .catch(() => true);
+      const projFile2Gone = await access(path.join(recDir, "e2e-proj-take-2.webm"))
+        .then(() => false)
+        .catch(() => true);
+      assert(projFileGone && projFile2Gone, "deleteProject removes the takes' files from disk");
+
+      // Projects without recordings / with a malformed payload delete fine.
+      const plainProj = await saveProject({ ...projWithTakes, id: "proj-plain", takes: [{ id: "t1", label: "Wokal", duration: 8, offset: 0, volume: 1, isMuted: false, isSoloed: false, trimStart: 0, trimEnd: 1 }] });
+      await deleteProject(plainProj.id, recDir);
+      assert((await getProjects()).length === 0, "project without audioUrl takes deletes without touching recordings");
+      const brokenProj = await saveProject({ ...projWithTakes, id: "proj-broken", takes: [{ id: "t1", label: "Wokal", duration: 8, offset: 0, volume: 1, isMuted: false, isSoloed: false, trimStart: 0, trimEnd: 1, audioUrl: "/api/recordings/e2e-never-uploaded" }] });
+      await deleteProject(brokenProj.id, recDir);
+      assert((await getProjects()).length === 0, "project referencing a never-uploaded take still deletes (best-effort prune)");
+      let unknownThrew = false;
+      try {
+        await deleteProject("does-not-exist", recDir);
+      } catch {
+        unknownThrew = true;
+      }
+      assert(unknownThrew, "deleting an unknown project still throws (P2025 as before)");
+    } finally {
+      await rm(recDir, { recursive: true, force: true }).catch(() => {});
+    }
   } finally {
     // Release the DB file locks BEFORE deleting the copy (the server actions'
     // Prisma singleton holds the query engine open until disconnected).

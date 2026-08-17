@@ -14,6 +14,9 @@
 //   following consonant).
 // • Assonance/slant detection driven by positional vowel skeletons and
 //   tail/edit similarity over the phonetic forms.
+// • Word-level clustering (detectRhymeClusters): the whole text is scanned,
+//   not just line endings — internal rhymes, multi-syllabic matches and
+//   repeated words anywhere form shared-color clusters (editor + panel).
 // • Expanded STOP_WORDS (conjunctions, pronouns, particles, prepositions)
 //   so function words never dictate a rhyme group.
 // • Performance: every word is analyzed once and memoized; the rhyme
@@ -405,6 +408,11 @@ function classifyAnalyses(a: WordAnalysis, b: WordAnalysis): RhymeType | null {
   if (lastMatch && tail >= 2) return "assonance";
   if (lastMatch && editSim >= 0.5) return "assonance";
   if (stressedMatch && tail >= 2) return "assonance";
+  // Feminine near-rhymes ("ulice" ↔ "milicji", "betonie" ↔ "strony"): the
+  // stressed vowel matches and the consonant skeleton is nearly identical,
+  // but the final vowel differs — a classic Polish rap assonance that a
+  // strict last-vowel rule would demote to an ungrouped slant.
+  if (stressedMatch && editSim >= 0.5) return "assonance";
 
   if (lastMatch) return "slant";
   if (tail >= 2) return "slant";
@@ -435,6 +443,8 @@ function classifyChunks(chunkA: string, chunkB: string): RhymeType | null {
   if (lastMatch && stressedMatch) return "assonance";
   if (lastMatch && tail >= 2) return "assonance";
   if (lastMatch && editSim >= 0.5) return "assonance";
+  // Same feminine near-rhyme rule as the word classifier (see above).
+  if (stressedMatch && editSim >= 0.5) return "assonance";
 
   if (lastMatch) return "slant";
   if (tail >= 2) return "slant";
@@ -477,7 +487,11 @@ function buildChunk(words: string[]): string {
 
 interface LineData {
   index: number;
+  /** Cleaned last meaningful (non-stop) word — the rhyme anchor. */
   lastWord: string;
+  /** Token index of `lastWord` within the trimmed line split — lets the UI
+   *  highlight the exact word that anchors the rhyme. */
+  lastWordIdx: number;
   chunk: string;
   isValid: boolean;
 }
@@ -1078,21 +1092,26 @@ function buildLineData(lines: string[]): LineData[] {
   for (let i = 0; i < lines.length; i++) {
     const trimmed = lines[i].trim();
     if (!trimmed) {
-      lineData.push({ index: i, lastWord: "", chunk: "", isValid: false });
+      lineData.push({ index: i, lastWord: "", lastWordIdx: -1, chunk: "", isValid: false });
       continue;
     }
     const tokens = trimmed.split(/\s+/);
     const meaningful: string[] = [];
-    for (const token of tokens) {
+    let lastMeaningfulIdx = -1;
+    tokens.forEach((token, idx) => {
       const cleaned = cleanWord(token);
-      if (cleaned && !isStopWord(cleaned)) meaningful.push(cleaned);
-    }
+      if (cleaned && !isStopWord(cleaned)) {
+        meaningful.push(cleaned);
+        lastMeaningfulIdx = idx;
+      }
+    });
     if (meaningful.length === 0) {
       // Nothing but stop words — fall back to the raw last word.
       const fallback = cleanWord(tokens[tokens.length - 1] || "");
       lineData.push({
         index: i,
         lastWord: fallback,
+        lastWordIdx: fallback ? tokens.length - 1 : -1,
         chunk: buildChunk(fallback ? [fallback] : []),
         isValid: !!fallback,
       });
@@ -1101,11 +1120,133 @@ function buildLineData(lines: string[]): LineData[] {
     lineData.push({
       index: i,
       lastWord: meaningful[meaningful.length - 1],
+      lastWordIdx: lastMeaningfulIdx,
       chunk: buildChunk(meaningful),
       isValid: true,
     });
   }
   return lineData;
+}
+
+/**
+ * The rhyme anchor word per raw line (cleaned form + token index within the
+ * trimmed line). Only lines with a real anchor are returned; the caller
+ * intersects this with the group map to highlight exactly the words that
+ * carry each rhyme. Indexes match `line.trim().split(/\s+/)` — the same
+ * tokenization the group detector uses.
+ */
+export function detectRhymeWords(lines: string[]): Map<number, { word: string; index: number }> {
+  const map = new Map<number, { word: string; index: number }>();
+  for (const ld of buildLineData(lines)) {
+    if (ld.isValid && ld.lastWord && ld.lastWordIdx >= 0) {
+      map.set(ld.index, { word: ld.lastWord, index: ld.lastWordIdx });
+    }
+  }
+  return map;
+}
+
+// ─── WORD-LEVEL RHYME CLUSTERS ────────────────────────────────────────
+
+/** One highlighted word — a member of a rhyme cluster. */
+export interface RhymeHit {
+  /** Raw token exactly as it appears in the line (punctuation included). */
+  raw: string;
+  /** Token index within `line.trim().split(/\s+/)` (same walk the UI uses). */
+  index: number;
+  /** Cleaned (lowercased, de-accented) word form. */
+  word: string;
+  /** Cluster color — every member of the cluster shares it. */
+  color: string;
+  /** Strongest rhyme type vs the cluster anchor. */
+  type: RhymeType;
+}
+
+export interface RhymeClusters {
+  /** lineIdx → hits (rhyming words) in token order. */
+  hits: Map<number, RhymeHit[]>;
+  /** lineIdx → first cluster's color (drives line-level UI: markers, flow meter). */
+  lineColors: Map<number, string>;
+  /** lineIdx → first cluster's rhyme type (exact/assonance). */
+  lineTypes: Map<number, RhymeType>;
+  /** Cluster colors in discovery order (for the legend). */
+  colors: string[];
+}
+
+/**
+ * Full-text rhyme clustering. Scans EVERY content word (stop words and
+ * punctuation excluded), not just line endings, and groups exact/assonance
+ * matches into clusters via anchor pairing in document order — the same
+ * strategy as the line-level detector but word-granular, so internal rhymes
+ * („Płomień …” ↔ „Promień …” mid-line), multi-syllabic matches and repeated
+ * words anywhere in the text are all captured. Each cluster gets one color;
+ * matching words share it everywhere (editor mirror, „Analiza Wersów” panel).
+ */
+export function detectRhymeClusters(lines: string[]): RhymeClusters {
+  interface Word {
+    line: number;
+    index: number;
+    raw: string;
+    cleaned: string;
+    analysis: WordAnalysis;
+  }
+
+  const words: Word[] = [];
+  for (let li = 0; li < lines.length; li++) {
+    const trimmed = lines[li].trim();
+    if (!trimmed) continue;
+    const tokens = trimmed.split(/\s+/);
+    tokens.forEach((raw, ti) => {
+      const cleaned = cleanWord(raw);
+      if (!cleaned || isStopWord(cleaned)) return;
+      words.push({ line: li, index: ti, raw, cleaned, analysis: analyzeWord(cleaned) });
+    });
+  }
+
+  // Anchor pairing: every unassigned word seeds a cluster; later unassigned
+  // words that rhyme with the anchor (exact/assonance — slants are too weak
+  // to merge) join it. O(n²) on content words — cheap because analyses are
+  // memoized and strings are short.
+  const clusters: Word[][] = [];
+  const assigned = new Set<number>();
+  for (let i = 0; i < words.length; i++) {
+    if (assigned.has(i)) continue;
+    const cluster = [words[i]];
+    assigned.add(i);
+    for (let j = i + 1; j < words.length; j++) {
+      if (assigned.has(j)) continue;
+      const type = classifyAnalyses(words[i].analysis, words[j].analysis);
+      if (type !== null && type !== "slant") {
+        cluster.push(words[j]);
+        assigned.add(j);
+      }
+    }
+    if (cluster.length >= 2) clusters.push(cluster);
+  }
+
+  const hits = new Map<number, RhymeHit[]>();
+  const lineColors = new Map<number, string>();
+  const lineTypes = new Map<number, RhymeType>();
+  const colors: string[] = [];
+
+  clusters.forEach((cluster, ci) => {
+    const color = RHYME_COLORS[ci % RHYME_COLORS.length];
+    colors.push(color);
+    const anchor = cluster[0];
+    // The anchor never classifies against itself — its type is measured
+    // against its first partner (which joined, so it cannot be null).
+    const anchorType = classifyAnalyses(anchor.analysis, cluster[1].analysis) ?? "assonance";
+    cluster.forEach((w, wi) => {
+      const type = wi === 0 ? anchorType : classifyAnalyses(anchor.analysis, w.analysis) ?? "assonance";
+      const list = hits.get(w.line) ?? [];
+      list.push({ raw: w.raw, index: w.index, word: w.cleaned, color, type });
+      hits.set(w.line, list);
+      if (!lineColors.has(w.line)) lineColors.set(w.line, color);
+      if (!lineTypes.has(w.line)) lineTypes.set(w.line, type);
+    });
+  });
+
+  for (const list of hits.values()) list.sort((a, b) => a.index - b.index);
+  return { hits, lineColors, lineTypes, colors };
 }
 
 /** Cluster valid lines into rhyme groups (transitive anchor pairing). */

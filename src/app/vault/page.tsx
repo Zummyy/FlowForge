@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type ReactNode, type RefObject } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo, useLayoutEffect, type ReactNode, type RefObject, type KeyboardEvent as ReactKeyboardEvent } from "react";
+import { createPortal } from "react-dom";
 
 // useLayoutEffect is a no-op on the server — this avoids the SSR hydration
 // warning while keeping synchronous, pre-paint measurement in the browser.
@@ -9,7 +10,8 @@ import AppShell from "@/components/layout/AppShell";
 import { useToast } from "@/components/studio/useToast";
 import { ToastView } from "@/components/studio/ToastView";
 import { ConfirmDialog } from "@/components/studio/ConfirmDialog";
-import { findRhymes, detectRhymeGroups, detectLineRhymeTypes, RhymeResult, RhymeType } from "@/lib/rhyme-engine";
+import { findRhymes, detectRhymeClusters, RhymeHit, RhymeResult, RhymeType } from "@/lib/rhyme-engine";
+import { diffLines, diffStats } from "@/lib/lyric-diff";
 import { recordChallengeEvent } from "@/lib/challenges";
 import { countLineSyllables, countWordSyllablesInLine, analyzeLyrics } from "@/lib/syllable-counter";
 import { loadCache, saveCache, tryDbWrite } from "@/lib/db-sync";
@@ -27,8 +29,10 @@ import {
   archiveLyricVersion,
   restoreLyricVersion,
   purgeArchivedLyricVersions,
+  publishLyric,
+  unpublishLyric,
 } from "@/actions/lyrics";
-import { exportLyricAsText, getExportHistory } from "@/actions/export";
+import { exportLyricAsText, exportLyricAsPdf, getExportHistory, clearExportHistory } from "@/actions/export";
 import { getMoodboard, saveMoodboard, type MoodboardData } from "@/actions/moodboard";
 import { getReleasePlan, saveReleasePlan, type ReleasePlanData } from "@/actions/release-plan";
 
@@ -88,6 +92,9 @@ interface TrackSummary {
   /** Recent version labels (last 5) — searchable alongside the title. */
   versionLabels: string[];
   updatedAt: string; // ISO
+  /** "draft" | "published" | "archived" — drives the 📢 badge + toggle. */
+  status: string;
+  isPublic: boolean;
 }
 
 function toTrackSummary(t: DbLyricRow): TrackSummary {
@@ -102,6 +109,8 @@ function toTrackSummary(t: DbLyricRow): TrackSummary {
       .map((v) => v.label)
       .filter((l): l is string => !!l),
     updatedAt: new Date(t.updatedAt).toISOString(),
+    status: t.status,
+    isPublic: t.isPublic,
   };
 }
 
@@ -128,21 +137,139 @@ const VAULT_TABS: ReadonlyArray<{ id: VaultTab; icon: string; label: string }> =
 ];
 
 // ─── WRITER'S BLOCK DATA ──────────────────────────────────────────────
-const INSPIRATION_SPARKS = [
-  "Idę przez ciemność i szukam...", "Kiedy świat milczy, ja...",
-  "Na ulicach nocą słychać...", "Pamiętam jak kiedyś...",
-  "W mojej głowie kręci się...", "Każdy dzień to nowa...",
-  "Nie cofnę czasu, ale...", "Wierzę że kiedyś...",
-  "Moje serce bije w rytm...", "Cienie przeszłości kładą się na...",
-  "Jestem jak latarnia na bezludnej wyspie", "Moje słowa to noże, tną ciszę",
-  "Życie to bit, a ja tańczę w deszczu", "Moje marzenia są cięższe niż beton",
-  "Każda łza to perła w koronie bólu", "Jestem mostem między snem a jawą",
-  "Moje serce to stary gramofon", "Czas to złodziej, a ja go gonię",
-  "Moje oczy widzą więcej niż słowa", "Ulice szepczą historie, których nie znam",
-  "A potem stało się coś, czego nikt się nie spodziewał", "Nikt nie wiedział, że to był początek końca",
-  "Wtedy zrozumiałem, że wszystko ma sens", "I wtedy usłyszałem głos, który mówił...",
-  "To była noc, która zmieniła wszystko", "Kiedy otworzyłem oczy, świat był inny",
-  "Nagle zrozumiałem, że nie jestem sam", "I wtedy poczułem, że mogę latać",
+// Categorized „Iskra” database — five creative prompt types, each with its
+// own pool. Sparks are drawn context-aware: when a „Klimat” (mood combo) is
+// active, the generator prefers sparks whose text matches those moods and
+// can synthesize fresh prompts from KLIMAT_TEMPLATES + the mood's keywords.
+
+type SparkCategory =
+  | "punchline"
+  | "theme"
+  | "wordplay"
+  | "opening"
+  | "imagery";
+
+interface SparkCategoryData {
+  id: SparkCategory;
+  label: string;
+  sparks: string[];
+}
+
+const SPARK_CATEGORIES: SparkCategoryData[] = [
+  {
+    id: "punchline",
+    label: "💥 Ustawki puenty",
+    sparks: [
+      "Ludzie mówią, że mam za dużo dumy…",
+      "Siedzę z myślami jak z kumplami…",
+      "Każdy ma swój limit, ja…",
+      "Zanim powiesz, że się nie da…",
+      "Oni liczą na moją porażkę…",
+      "Słowa mają moc, ale cisza…",
+      "Wszyscy chcą być na topie, a ja…",
+      "Nie jestem idealny, ale…",
+      "Mówili, że nic ze mnie nie będzie…",
+      "Życie rozdaje karty, a ja…",
+      "Mój największy wróg patrzy w lustro…",
+      "Trzy rano, miasto śpi, a ja…",
+      "Nie chwalę się, tylko mówię jak jest…",
+      "Każdy krok to zakład, stawiam wszystko…",
+    ],
+  },
+  {
+    id: "theme",
+    label: "🧠 Koncepcje tematyczne",
+    sparks: [
+      "Utwór o tym, że czas leczy, ale blizny zostają",
+      "Koncepcja: rozmowa z młodszym sobą",
+      "Tekst o przyjaźni, która przetrwała blokowisko",
+      "Historia od zera do czegoś, bez sprzedawania duszy",
+      "Temat: dziedzictwo — co zostawiamy po sobie",
+      "Kawałek o mieście, które śpi, kiedy my czuwamy",
+      "Refleksja nad ceną sławy i pustymi lajkami",
+      "Droga z podwórka na scenę — i z powrotem do korzeni",
+      "Utwór o matce, która wierzyła, kiedy inni zwątpili",
+      "Koncepcja: ostatni dzień wolności, zanim wszystko się zmieni",
+      "Tekst o tym, że prawda boli, ale kłamstwo zabija",
+      "Temat: młodość, która nie miała planu B",
+      "Kawałek o nerwach, które trzymasz w ryzach",
+      "Historia o tym, jak marzenia kosztują więcej niż pieniądze",
+    ],
+  },
+  {
+    id: "wordplay",
+    label: "🔤 Zabawy słowne",
+    sparks: [
+      "Użyj słowa „beton” w trzech różnych znaczeniach",
+      "Zbuduj wers, w którym „noc” i „moc” rymują się dwa razy",
+      "Napisz puentę z „góra/dół” jako metaforą losu",
+      "Jedno słowo, które zmienia sens całej zwrotki",
+      "Kalambur: „gram” jako gra i granie",
+      "Zamknij ostatni wers homonimem",
+      "Zamień popularne powiedzenie na wers o rapie",
+      "Wiersz, w którym każda linia kończy się inną formą tego samego słowa",
+      "Zbuduj metaforę: serce jako stary sprzęt",
+      "Słowo „echo” jako temat przewodni — rozwiń je w refrenie",
+      "Gra słów: „flow” jako nurt rzeki i flow rapera",
+      "Znajdź rym do „ulica”, którego nikt nie użył",
+    ],
+  },
+  {
+    id: "opening",
+    label: "🚪 Linie otwierające",
+    sparks: [
+      "Budzę się z wierszem na ustach…",
+      "Miasto wstaje, a ja kończę…",
+      "Siedzę na klatce i patrzę na horyzont…",
+      "Mikrofon zimny jak poranek…",
+      "Zanim cokolwiek powiem, słuchaj…",
+      "To nie jest kolejna opowieść o biedzie…",
+      "Zaczynam tam, gdzie inni kończą…",
+      "Mam w głowie hałas, który układa się w rymy…",
+      "Pierwszy wers ma być jak cios…",
+      "Nocą słychać tylko bicie serca i metronom…",
+      "Nie piszę o sobie, piszę o nas…",
+      "Otwieram zeszyt, a z niego wychodzi świat…",
+      "Zanim wejdziesz w ten kawałek, sprawdź z kim gadasz…",
+      "Każdy wielki tekst zaczyna się od cichego pomysłu…",
+    ],
+  },
+  {
+    id: "imagery",
+    label: "🌌 Abstrakcyjne obrazy",
+    sparks: [
+      "Deszcz na szybie rysuje mapę moich myśli",
+      "Betony wschodzą jak drzewa, a my między nimi korzeniami",
+      "Dym z komina wije się jak melodia bez słów",
+      "Cienie latarni tańczą na ścianie bloku",
+      "Miasto oddycha rytmem, którego nikt nie notuje",
+      "Śnieg na osiedlu przykrywa ślady, ale nie pamięć",
+      "Winda jedzie w górę, a marzenia w dół",
+      "Latarnia gasi blask, kiedy słońce wstaje z betonu",
+      "Asfalt pęka, a pod nim bije źródło",
+      "Gwiazdy nad blokowiskiem są jak słowa, których nikt nie zapisał",
+      "Mgła nad rzeką chowa mosty, ale nie pytania",
+      "Kruki na dachu liczą nasze wersy",
+      "Klatka schodowa pachnie gotowaniem i marzeniami",
+      "Prąd w bloku trzaska jak werbel na próbie",
+    ],
+  },
+];
+
+// Context-aware templates: when a „Klimat” is active the generator can
+// synthesize a fresh, tailored prompt by filling {word} with a keyword drawn
+// from the selected moods' pools (e.g. „Mrok” → ciemność/cienie/noc/…).
+const KLIMAT_TEMPLATES = [
+  "Czuję {word} w każdym oddechu — zapisuję to",
+  "Niosę {word} jak bliznę, której nie wstydzę się pokazać",
+  "Mówią, że {word} to przeszłość, a ja w niej dopiero zaczynam",
+  "W tym {word} jest prawda, której nie sprzedam",
+  "Każdy wers to {word}, które dźwigam na plecach",
+  "Kiedy świat gada, ja wsłuchuję się w {word}",
+  "{word} prowadzi mnie przez ten kawałek",
+  "Nie uciekam od {word} — ono jest częścią mnie",
+  "Z {word} na ustach buduję to, czego nie zburzą",
+  "W {word} widzę lustro, w którym poznaję siebie",
 ];
 
 const MOOD_KEYWORDS = {
@@ -210,32 +337,146 @@ export default function VaultPage() {
 
   const textareaRef = useRef<HTMLTextAreaElement>(null);
 
+  // ── Editor undo/redo history ──
+  // The textarea is CONTROLLED (React state), so the browser's native undo
+  // cannot track changes — and programmatic insertions („Iskra”, mood words,
+  // rhyme suggestions) never reach the native stack at all. The editor owns
+  // its history: every programmatic insertion is one transaction, typing
+  // bursts merge into a single step, and Ctrl+Z / Ctrl+Y / Ctrl+Shift+Z are
+  // bound here (preventDefault stops the native stack from fighting us).
+  const contentRef = useRef(content);
+  const undoStackRef = useRef<string[]>([]);
+  const redoStackRef = useRef<string[]>([]);
+  const lastEditRef = useRef<{ time: number; kind: "typing" | "programmatic" } | null>(null);
+  const MAX_HISTORY_ENTRIES = 100;
+
+  // Keep the ref in sync with every content write (incl. external ones like
+  // track switches that bypass updateContent).
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+
+  // Drop the whole history — used when the document is replaced wholesale
+  // (track switch, version restore, clear). Undo must never reach into a
+  // different track's text.
+  const resetHistory = useCallback(() => {
+    undoStackRef.current = [];
+    redoStackRef.current = [];
+    lastEditRef.current = null;
+  }, []);
+
+  const recordHistory = useCallback((prev: string, kind: "typing" | "programmatic") => {
+    const now = Date.now();
+    const last = lastEditRef.current;
+    // A typing burst (keystrokes within 800 ms) is ONE undo step — like real
+    // editors. Every programmatic insertion is always its own transaction.
+    const merge = kind === "typing" && last !== null && last.kind === "typing" && now - last.time < 800;
+    if (!merge) {
+      undoStackRef.current.push(prev);
+      if (undoStackRef.current.length > MAX_HISTORY_ENTRIES) {
+        undoStackRef.current.shift();
+      }
+    }
+    redoStackRef.current = [];
+    lastEditRef.current = { time: now, kind };
+  }, []);
+
+  const updateContent = useCallback((next: string, kind: "typing" | "programmatic") => {
+    const prev = contentRef.current;
+    if (prev === next) return;
+    recordHistory(prev, kind);
+    contentRef.current = next;
+    setContent(next);
+  }, [recordHistory]);
+
+  const undo = useCallback(() => {
+    const prev = undoStackRef.current.pop();
+    if (prev === undefined) return;
+    redoStackRef.current.push(contentRef.current);
+    contentRef.current = prev;
+    lastEditRef.current = null;
+    setContent(prev);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(prev.length, prev.length);
+      }
+    });
+  }, []);
+
+  const redo = useCallback(() => {
+    const next = redoStackRef.current.pop();
+    if (next === undefined) return;
+    undoStackRef.current.push(contentRef.current);
+    contentRef.current = next;
+    lastEditRef.current = null;
+    setContent(next);
+    requestAnimationFrame(() => {
+      const ta = textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(next.length, next.length);
+      }
+    });
+  }, []);
+
+  // Ctrl/Cmd+Z → undo, Ctrl/Cmd+Shift+Z and Ctrl/Cmd+Y → redo. preventDefault
+  // guarantees the native browser stack can't intercept or double-handle.
+  const handleEditorKeyDown = useCallback((e: ReactKeyboardEvent<HTMLTextAreaElement>) => {
+    if (!(e.ctrlKey || e.metaKey)) return;
+    const key = e.key.toLowerCase();
+    if (key === "z") {
+      e.preventDefault();
+      if (e.shiftKey) redo();
+      else undo();
+    } else if (key === "y") {
+      e.preventDefault();
+      redo();
+    }
+  }, [undo, redo]);
+
   const toggleRhymeAnalysis = useCallback(() => {
     setRhymeAnalysisActive((prev) => !prev);
   }, []);
 
   const analysis = useMemo(() => analyzeLyrics(content), [content]);
 
-  const rhymeGroups = useMemo(() => {
-    if (!rhymeAnalysisActive || !content.trim()) return new Map<number, string>();
-    const lines = content.split("\n");
-    if (lines.length < 2) return new Map<number, string>();
-    return detectRhymeGroups(lines);
-  }, [content, rhymeAnalysisActive]);
-
-  const rhymeGroupCount = useMemo(() => {
-    if (!rhymeAnalysisActive) return 0;
-    return new Set(rhymeGroups.values()).size;
-  }, [rhymeGroups, rhymeAnalysisActive]);
-
   // Logical lines — source of truth for the measurement mirror and markers.
   const editorLines = useMemo(() => content.split("\n"), [content]);
 
-  // Per-line rhyme type (exact/assonance) for type-colored markers.
-  const lineRhymeTypes = useMemo(() => {
-    if (!rhymeAnalysisActive || editorLines.length < 2) return new Map<number, RhymeType>();
-    return detectLineRhymeTypes(editorLines);
-  }, [editorLines, rhymeAnalysisActive]);
+  // Word-level rhyme clusters: every content word in the whole text is
+  // scanned (not just line endings), so internal rhymes, multi-syllabic
+  // matches and repeated words anywhere form shared-color clusters. The
+  // editor highlights every matching word; the „Analiza Wersów” panel shows
+  // one dot per cluster present on the line.
+  const rhymeClusters = useMemo(() => {
+    if (!rhymeAnalysisActive || !content.trim()) return null;
+    return detectRhymeClusters(editorLines);
+  }, [rhymeAnalysisActive, content, editorLines]);
+
+  // Line → first cluster color (markers, flow meter, legend fallback).
+  const rhymeGroups = useMemo(() => rhymeClusters?.lineColors ?? new Map<number, string>(), [rhymeClusters]);
+  const rhymeHits = useMemo(() => rhymeClusters?.hits ?? new Map<number, RhymeHit[]>(), [rhymeClusters]);
+  const rhymeGroupCount = useMemo(() => rhymeClusters?.colors.length ?? 0, [rhymeClusters]);
+
+  // Raw line index → analyzed entry. `analyzeLyrics` drops blank lines, so
+  // its array indexes do NOT match the raw split used by `rhymeGroups` / the
+  // editor overlay — mapping through this keeps the „Analiza Wersów” color
+  // dots in exact 1:1 sync with the editor highlights even when the text has
+  // blank lines between stanzas.
+  const panelLines = useMemo(() => {
+    const byRaw = new Map<number, (typeof analysis.lines)[number]>();
+    let analyzedIdx = 0;
+    for (let rawIdx = 0; rawIdx < editorLines.length; rawIdx++) {
+      if (editorLines[rawIdx].trim().length === 0) continue;
+      if (analyzedIdx < analysis.lines.length) {
+        byRaw.set(rawIdx, analysis.lines[analyzedIdx]);
+      }
+      analyzedIdx++;
+    }
+    return byRaw;
+  }, [editorLines, analysis]);
 
   useEffect(() => {
     if (selectedWord) setRhymes(findRhymes(selectedWord));
@@ -273,7 +514,10 @@ export default function VaultPage() {
   useEffect(() => {
     try {
       const savedContent = localStorage.getItem(CONTENT_KEY);
-      if (savedContent) setContent(savedContent);
+      if (savedContent) {
+        setContent(savedContent);
+        resetHistory();
+      }
     } catch { /* ignore */ }
     setContentLoaded(true);
   }, []);
@@ -403,6 +647,7 @@ export default function VaultPage() {
           setLyricId(lyric.id);
           setTitle(localTitle);
           setContent(localContent);
+          resetHistory();
           // Mirror existing saved versions into the backend.
           const imported = await Promise.all(
             localVersions.map((v) =>
@@ -427,6 +672,8 @@ export default function VaultPage() {
                 syllableCount: lyric.syllableCount ?? 0,
                 versionCount: imported.length,
                 versionLabels: localVersions.map((v) => v.label).filter((l): l is string => !!l),
+                status: lyric.status,
+                isPublic: lyric.isPublic,
                 updatedAt: new Date(lyric.updatedAt).toISOString(),
               },
             ]);
@@ -449,6 +696,7 @@ export default function VaultPage() {
         if (localIsNewer) {
           setTitle(localTitle.trim() || full.title);
           setContent(localContent);
+          resetHistory();
           const analysis = analyzeLyrics(localContent);
           tryDbWrite(() =>
             updateLyric(full.id, {
@@ -463,6 +711,7 @@ export default function VaultPage() {
         } else if (full.content) {
           setTitle(full.title);
           setContent(full.content);
+          resetHistory();
         }
         const dbVersions: LyricVersion[] = (full.versions ?? []).map((v) => ({
           id: v.id,
@@ -597,6 +846,7 @@ export default function VaultPage() {
   // content to the editor and keeps the DB row in sync (when a target exists).
   const applyVersionContent = useCallback((targetId: string | null, content: string) => {
     setContent(content);
+    resetHistory();
     if (targetId) {
       const analysis = analyzeLyrics(content);
       tryDbWrite(() =>
@@ -754,6 +1004,7 @@ export default function VaultPage() {
       setLyricId(full.id);
       setTitle(full.title);
       setContent(full.content);
+      resetHistory();
       setVersions(
         (full.versions ?? [])
           .map((v): LyricVersion => ({
@@ -782,6 +1033,7 @@ export default function VaultPage() {
         setLyricId(null);
         setTitle("Bez tytułu");
         setContent("");
+        resetHistory();
         setVersions([]);
         saveCache(CURRENT_KEY, "");
         showToast("✍️ Nowy utwór — zacznij pisać");
@@ -814,6 +1066,7 @@ export default function VaultPage() {
         setLyricId(null);
         setTitle("Bez tytułu");
         setContent("");
+        resetHistory();
         setVersions([]);
         saveCache(CURRENT_KEY, "");
       };
@@ -836,6 +1089,26 @@ export default function VaultPage() {
   // True when the delete confirmation was triggered from the archive (the
   // „Usuń na stałe” variant — the row is already hidden from the working list).
   const [deletePermanent, setDeletePermanent] = useState(false);
+
+  // ── Publish / unpublish (status="published" + isPublic + /feed?shared=) ──
+  const togglePublish = useCallback(
+    async (t: TrackSummary) => {
+      try {
+        if (t.status === "published") {
+          await unpublishLyric(t.id);
+          showToast(`↩️ Cofnięto publikację: ${t.title}`, "info");
+        } else {
+          await publishLyric(t.id);
+          showToast(`📢 Opublikowano: ${t.title} — /feed?shared=${t.id}`, "info");
+        }
+      } catch {
+        showToast("⚠️ Nie udało się zaktualizować publikacji", "info");
+        return;
+      }
+      refreshTracks();
+    },
+    [refreshTracks, showToast]
+  );
 
   // ── Track archive (Lyric.status = "archived") ─────────────────────────
   const archiveTrack = useCallback(
@@ -985,6 +1258,74 @@ export default function VaultPage() {
     refreshExportHistory();
   }, [refreshExportHistory]);
 
+  // ── Print / PDF export: portaled „karta tekstu” + window.print() ──
+  const [printData, setPrintData] = useState<{
+    title: string;
+    date: string;
+    content: string;
+    lineCount: number;
+    verseCount: number;
+    syllableCount: number;
+    wordCount: number;
+    bpm: number | null;
+  } | null>(null);
+
+  const clearHistory = useCallback(async () => {
+    if (!lyricId) return;
+    try {
+      await clearExportHistory(lyricId);
+      setExportHistory([]);
+      showToast("🧹 Historia eksportów wyczyszczona", "info");
+    } catch {
+      showToast("⚠️ Nie udało się wyczyścić historii", "info");
+    }
+  }, [lyricId, showToast]);
+
+  const handleExportPdf = useCallback(async () => {
+    if (!content.trim()) {
+      showToast("✍️ Najpierw napisz tekst do wyeksportowania", "info");
+      return;
+    }
+    const versionTitle = title.trim() || "Bez tytułu";
+    try {
+      // Make sure the DB row reflects the current content, then pull the
+      // printable data (this also records the ExportLog „pdf” entry).
+      const id = await persistLyric();
+      if (!id) throw new Error("no lyric in DB");
+      const pdf = await exportLyricAsPdf(id);
+      setPrintData({
+        title: pdf.title,
+        date: pdf.date,
+        content: pdf.content,
+        lineCount: pdf.lineCount,
+        verseCount: pdf.verseCount,
+        syllableCount: pdf.syllableCount,
+        wordCount: pdf.wordCount,
+        bpm: pdf.bpm,
+      });
+    } catch {
+      // DB unavailable — render the print view from the local copy.
+      const analysis = analyzeLyrics(content);
+      setPrintData({
+        title: versionTitle,
+        date: new Date().toLocaleDateString("pl-PL"),
+        content,
+        lineCount: analysis.lineCount,
+        verseCount: analysis.verseCount,
+        syllableCount: analysis.totalSyllables,
+        wordCount: analysis.wordCount,
+        bpm: null,
+      });
+    }
+    // Let the portal render, then open the browser print dialog („Zapisz
+    // jako PDF” is the default target in most browsers).
+    requestAnimationFrame(() => {
+      setTimeout(() => window.print(), 60);
+    });
+    showToast("🖨️ Otwieram widok wydruku — wybierz „Zapisz jako PDF”", "info");
+    refreshExportHistory();
+  }, [content, title, persistLyric, showToast, refreshExportHistory]);
+
   const handleExport = useCallback(async () => {
     if (!content.trim()) {
       showToast("✍️ Najpierw napisz tekst do wyeksportowania", "info");
@@ -1037,8 +1378,10 @@ export default function VaultPage() {
     const ta = textareaRef.current;
     const start = ta.selectionStart;
     const end = ta.selectionEnd;
-    const newContent = content.substring(0, start) + text + content.substring(end);
-    setContent(newContent);
+    // Programmatic insertion = an INDEPENDENT history transaction, so a
+    // single Ctrl+Z right after „Losuj Iskrę” removes exactly this text.
+    const current = contentRef.current;
+    updateContent(current.substring(0, start) + text + current.substring(end), "programmatic");
     requestAnimationFrame(() => {
       if (textareaRef.current) {
         textareaRef.current.focus();
@@ -1046,12 +1389,36 @@ export default function VaultPage() {
         textareaRef.current.setSelectionRange(newPos, newPos);
       }
     });
-  }, [content]);
+  }, [updateContent]);
 
   return (
     <AppShell>
       {/* Toast notification — shared component driven by the useToast hook */}
       <ToastView toast={toast} />
+      {/* Print view for the PDF export — portaled to <body> so @media print
+          can hide everything else and leave exactly this „karta tekstu”. */}
+      {printData &&
+        createPortal(
+          <div id="print-area">
+            <div className="print-card">
+              <div className="print-meta">
+                <span>FlowForge</span>
+                <span>{printData.date}</span>
+              </div>
+              <h1>{printData.title}</h1>
+              <div className="print-stats">
+                <span>Linie: {printData.lineCount}</span>
+                <span>Zwrotki: {printData.verseCount}</span>
+                <span>Sylaby: {printData.syllableCount}</span>
+                <span>Słowa: {printData.wordCount}</span>
+                {printData.bpm != null && <span>BPM: {printData.bpm}</span>}
+              </div>
+              <pre>{printData.content}</pre>
+              <div className="print-footer">Wygenerowano przez FlowForge</div>
+            </div>
+          </div>,
+          document.body
+        )}
       {/* Track deletion confirmation — styled modal (matches the Studio). */}
       <ConfirmDialog
         open={!!deleteTarget}
@@ -1087,6 +1454,10 @@ export default function VaultPage() {
             <button onClick={handleExport} title="Wyeksportuj tekst do pliku .txt"
               className="px-4 py-2 rounded-xl text-sm font-medium transition-all bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white">
               📤 Eksportuj TXT
+            </button>
+            <button onClick={handleExportPdf} title="Wyeksportuj tekst jako PDF (widok wydruku)"
+              className="px-4 py-2 rounded-xl text-sm font-medium transition-all bg-zinc-800 text-zinc-300 hover:bg-zinc-700 hover:text-white">
+              📄 Eksportuj PDF
             </button>
             <button onClick={saveVersion}
               className={`px-4 py-2 rounded-xl text-sm font-medium transition-all ${saveSuccess ? "bg-green-500/20 text-green-400 border border-green-500/40" : "bg-amber-500/10 text-amber-500 hover:bg-amber-500/20"}`}>
@@ -1160,13 +1531,15 @@ export default function VaultPage() {
                 {rhymeAnalysisActive ? (
                   <RhymeMarkersOverlay
                     lines={editorLines}
-                    types={lineRhymeTypes}
+                    groups={rhymeGroups}
+                    hits={rhymeHits}
                     textareaRef={textareaRef}
                   >
                     <textarea
                       ref={textareaRef}
                       value={content}
-                      onChange={(e) => setContent(e.target.value)}
+                      onChange={(e) => updateContent(e.target.value, "typing")}
+                      onKeyDown={handleEditorKeyDown}
                       onMouseUp={handleMouseUp}
                       spellCheck={false}
                       placeholder={"Zacznij pisać swój tekst tutaj...\n\nKażda linia to nowy wers.\nPuste linie oddzielają zwrotki."}
@@ -1177,7 +1550,8 @@ export default function VaultPage() {
                   <textarea
                     ref={textareaRef}
                     value={content}
-                    onChange={(e) => setContent(e.target.value)}
+                    onChange={(e) => updateContent(e.target.value, "typing")}
+                    onKeyDown={handleEditorKeyDown}
                     onMouseUp={handleMouseUp}
                     spellCheck={false}
                     placeholder={"Zacznij pisać swój tekst tutaj...\n\nKażda linia to nowy wers.\nPuste linie oddzielają zwrotki."}
@@ -1394,6 +1768,11 @@ export default function VaultPage() {
                                 <p className="text-xs font-medium text-white truncate flex items-center gap-1.5">
                                   {isCurrent && <span className="text-amber-400">●</span>}
                                   {t.title}
+                                  {t.status === "published" && (
+                                    <span className="text-[9px] font-medium text-emerald-400 bg-emerald-500/10 border border-emerald-500/30 rounded-full px-1.5 py-0.5 shrink-0">
+                                      ✓ Opublikowany
+                                    </span>
+                                  )}
                                 </p>
                                 <p className="text-[10px] text-zinc-500 truncate">
                                   {t.lineCount} wersów • {t.wordCount} słów • {t.syllableCount} sylab • {t.versionCount} wersji •{" "}
@@ -1402,6 +1781,17 @@ export default function VaultPage() {
                                     <span className="text-zinc-600"> • 🏷️ {t.versionLabels.length}</span>
                                   )}
                                 </p>
+                              </button>
+                              <button
+                                onClick={() => togglePublish(t)}
+                                className={`w-6 h-6 rounded-lg text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-all shrink-0 ${
+                                  t.status === "published"
+                                    ? "text-emerald-400 hover:text-emerald-300"
+                                    : "text-zinc-600 hover:text-emerald-400"
+                                }`}
+                                title={t.status === "published" ? "Cofnij publikację" : "Publikuj utwór"}
+                              >
+                                {t.status === "published" ? "✓" : "📤"}
                               </button>
                               <button
                                 onClick={() => archiveTrack(t)}
@@ -1482,16 +1872,32 @@ export default function VaultPage() {
 
               <RhymeAssistantPanel selectedWord={selectedWord} rhymes={rhymes} onInsert={insertText} />
 
-              {/* Export history — backed by getExportHistory */}
+              {/* Export history — fully backed by the ExportLog table */}
               <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-4">
                 <h3 className="text-sm font-semibold text-white mb-3 flex items-center gap-2">
                   <span>📤</span> Historia Eksportów
+                  {exportHistory.length > 0 && (
+                    <button
+                      onClick={clearHistory}
+                      className="ml-auto px-2 py-1 rounded-lg bg-zinc-800 text-zinc-400 text-[10px] font-medium hover:bg-red-500/10 hover:text-red-400 transition-colors"
+                    >
+                      🧹 Wyczyść historię
+                    </button>
+                  )}
                 </h3>
                 {exportHistory.length > 0 ? (
                   <div className="space-y-1.5">
                     {exportHistory.slice(0, 5).map((row) => (
                       <div key={row.id} className="flex items-center justify-between px-3 py-2 rounded-lg bg-zinc-800/50">
-                        <span className="text-xs text-zinc-300">📄 {row.format.toUpperCase()}</span>
+                        <span
+                          className={`text-[10px] font-semibold rounded-full px-2 py-0.5 ${
+                            row.format === "pdf"
+                              ? "bg-red-500/10 text-red-400 border border-red-500/30"
+                              : "bg-amber-500/10 text-amber-400 border border-amber-500/30"
+                          }`}
+                        >
+                          📄 {row.format.toUpperCase()}
+                        </span>
                         <span className="text-[10px] text-zinc-500">
                           {new Date(row.createdAt).toLocaleString("pl-PL", {
                             day: "2-digit",
@@ -1525,7 +1931,7 @@ export default function VaultPage() {
                   <div className="mb-3 p-2 rounded-lg bg-zinc-800/50">
                     <p className="text-[10px] text-zinc-500 mb-1.5">Wykryte grupy rymów:</p>
                     <div className="flex flex-wrap gap-1.5">
-                      {Array.from(new Set(rhymeGroups.values())).map((color, i) => (
+                      {rhymeClusters?.colors.map((color, i) => (
                         <span key={i} className="flex items-center gap-1 text-[10px] text-zinc-400">
                           <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: color }} />
                           Grupa {i + 1}
@@ -1536,18 +1942,36 @@ export default function VaultPage() {
                 )}
                 
                 <div className="space-y-1 max-h-[300px] overflow-y-auto">
-                  {analysis.lines.length > 0 ? (
-                    analysis.lines.map((line, idx) => {
-                      const color = rhymeAnalysisActive ? rhymeGroups.get(idx) : undefined;
+                  {panelLines.size > 0 ? (
+                    editorLines.map((rawLine, idx) => {
+                      const line = panelLines.get(idx);
+                      // Blank lines are skipped (same as before), but the
+                      // color lookup uses the RAW index so dots stay aligned
+                      // with the editor overlay across stanza breaks.
+                      if (!line) return null;
+                      // One dot per rhyme CLUSTER present on this line (in
+                      // token order) — internal rhymes get their own dots.
+                      const lineHits = rhymeAnalysisActive ? (rhymeHits.get(idx) ?? []) : [];
+                      const dotColors: string[] = [];
+                      for (const hit of lineHits) {
+                        if (!dotColors.includes(hit.color)) dotColors.push(hit.color);
+                      }
                       return (
                         <div key={idx} className="flex items-center gap-2 text-xs py-1 px-2 rounded-lg hover:bg-zinc-800/50 transition-colors">
                           <span className="text-zinc-600 w-5 text-right font-mono">{idx + 1}</span>
-                          {color ? (
-                            <span className="w-4 h-4 rounded-md shrink-0 flex items-center justify-center" style={{ backgroundColor: color + "30", border: `1px solid ${color}` }}>
-                              <span className="w-2 h-2 rounded-sm" style={{ backgroundColor: color }} />
+                          {dotColors.length > 0 ? (
+                            <span className="flex -space-x-1 shrink-0">
+                              {dotColors.map((c) => (
+                                <span
+                                  key={c}
+                                  data-rhyme-dot={c}
+                                  className="w-3 h-3 rounded-full border border-black/40"
+                                  style={{ backgroundColor: c }}
+                                />
+                              ))}
                             </span>
                           ) : (
-                            <span className="w-4 h-4 shrink-0" />
+                            <span className="w-3 h-3 shrink-0" />
                           )}
                           <div className="flex-1 truncate text-zinc-400">{line.text.substring(0, 35)}{line.text.length > 35 ? "..." : ""}</div>
                           <span className="text-amber-500 font-mono text-[10px]">{line.syllables}s</span>
@@ -1608,59 +2032,141 @@ function shuffle<T>(arr: T[]): T[] {
   return arr;
 }
 
-function WriterBlockPanel({ content, onInsert }: { content: string; onInsert: (text: string) => void }) {
-  const [activeSpark, setActiveSpark] = useState<string | null>(null);
-  const [activeMood, setActiveMood] = useState<string | null>(null);
+/** Moods whose keyword pool intersects the spark's text (auto-tagging). */
+function sparkMoodAffinity(spark: string, moods: Record<string, string[]>): string[] {
+  const lower = spark.toLowerCase();
+  return Object.entries(moods)
+    .filter(([, words]) => words.some((w) => lower.includes(w)))
+    .map(([name]) => name);
+}
 
-  const rollSpark = useCallback(() => {
-    setActiveSpark(INSPIRATION_SPARKS[Math.floor(Math.random() * INSPIRATION_SPARKS.length)]);
+interface ActiveSpark {
+  text: string;
+  /** Chip label — the source category or the klimat it was tailored to. */
+  label: string;
+}
+
+function WriterBlockPanel({ content, onInsert }: { content: string; onInsert: (text: string) => void }) {
+  const [activeSpark, setActiveSpark] = useState<ActiveSpark | null>(null);
+  const [activeMoods, setActiveMoods] = useState<string[]>([]);
+  // Brief glow pulse on the klimat section after „Losuj Klimat”.
+  const [klimatFlash, setKlimatFlash] = useState(false);
+  const klimatTimerRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    return () => {
+      if (klimatTimerRef.current !== null) window.clearTimeout(klimatTimerRef.current);
+    };
   }, []);
 
-  // Deterministic per mood: re-shuffling on every render would make the
-  // displayed words jump around while the user types in the editor.
+  // Context-aware draw: with a klimat active, 45% of rolls synthesize a fresh
+  // prompt from a klimat template + a mood keyword; otherwise sparks whose
+  // auto-detected mood affinity matches the klimat are preferred; falls back
+  // to the full categorized pool.
+  const rollSparkFor = useCallback((klimat: string[]): ActiveSpark => {
+    const allSparks = SPARK_CATEGORIES.flatMap((c) =>
+      c.sparks.map((s) => ({ text: s, label: c.label }))
+    );
+    const klimatWords = klimat.flatMap((m) => MOOD_KEYWORDS[m as keyof typeof MOOD_KEYWORDS] ?? []);
+
+    if (klimat.length > 0 && klimatWords.length > 0 && Math.random() < 0.45) {
+      const tpl = KLIMAT_TEMPLATES[Math.floor(Math.random() * KLIMAT_TEMPLATES.length)];
+      const word = klimatWords[Math.floor(Math.random() * klimatWords.length)];
+      return { text: tpl.replaceAll("{word}", word), label: `🎭 Klimat: ${klimat.join(" + ")}` };
+    }
+
+    if (klimat.length > 0) {
+      const matching = allSparks.filter((s) =>
+        sparkMoodAffinity(s.text, MOOD_KEYWORDS).some((m) => klimat.includes(m))
+      );
+      if (matching.length > 0) {
+        return matching[Math.floor(Math.random() * matching.length)];
+      }
+    }
+    return allSparks[Math.floor(Math.random() * allSparks.length)];
+  }, []);
+
+  const rollSpark = useCallback(() => {
+    setActiveSpark(rollSparkFor(activeMoods));
+  }, [activeMoods, rollSparkFor]);
+
+  // Pick 1–3 random moods, flash the vibe section and roll a spark tailored
+  // to the NEW klimat in one motion — the workspace shifts direction.
+  const rollKlimat = useCallback(() => {
+    const names = Object.keys(MOOD_KEYWORDS);
+    const picked = shuffle(names).slice(0, 1 + Math.floor(Math.random() * 2));
+    setActiveMoods(picked);
+    setActiveSpark(rollSparkFor(picked));
+    setKlimatFlash(true);
+    if (klimatTimerRef.current !== null) window.clearTimeout(klimatTimerRef.current);
+    klimatTimerRef.current = window.setTimeout(() => setKlimatFlash(false), 650);
+  }, [rollSparkFor]);
+
+  const toggleMood = useCallback((mood: string) => {
+    setActiveMoods((prev) => (prev.includes(mood) ? prev.filter((m) => m !== mood) : [...prev, mood]));
+  }, []);
+
+  // Deterministic per klimat (re-shuffling per render would make the words
+  // jump while the user types in the editor). Merged pool of all active moods.
   const moodWords = useMemo(() => {
-    if (!activeMood) return [];
-    const words = MOOD_KEYWORDS[activeMood as keyof typeof MOOD_KEYWORDS] || [];
-    return shuffle([...words]).slice(0, 4);
-  }, [activeMood]);
+    if (activeMoods.length === 0) return [];
+    const merged = [...new Set(activeMoods.flatMap((m) => MOOD_KEYWORDS[m as keyof typeof MOOD_KEYWORDS] ?? []))];
+    return shuffle([...merged]).slice(0, 6);
+  }, [activeMoods]);
 
   return (
     <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-5">
       <div className="mb-4">
         <div className="flex items-center justify-between mb-2">
           <h4 className="text-xs font-medium text-zinc-400 flex items-center gap-1"><span>✨</span> Iskra Inspiracji</h4>
-          <button onClick={rollSpark} className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-purple-500/20 to-amber-500/20 text-[10px] font-medium text-white hover:from-purple-500/30 hover:to-amber-500/30 transition-all active:scale-95">
+          <button data-roll-spark onClick={rollSpark} className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-purple-500/20 to-amber-500/20 text-[10px] font-medium text-white hover:from-purple-500/30 hover:to-amber-500/30 transition-all active:scale-95">
             🎲 Losuj Iskrę
           </button>
         </div>
         {activeSpark ? (
-          <button onClick={() => onInsert(activeSpark)} className="w-full text-left p-3 rounded-xl bg-gradient-to-br from-purple-500/10 to-amber-500/10 border border-purple-500/20 hover:border-purple-500/40 transition-all group">
-            <p className="text-sm text-zinc-200 group-hover:text-white transition-colors leading-relaxed">&ldquo;{activeSpark}&rdquo;</p>
+          <button data-spark-card onClick={() => onInsert(activeSpark.text)} className="w-full text-left p-3 rounded-xl bg-gradient-to-br from-purple-500/10 to-amber-500/10 border border-purple-500/20 hover:border-purple-500/40 transition-all group">
+            <p className="text-[10px] text-zinc-500 mb-1">{activeSpark.label}</p>
+            <p className="text-sm text-zinc-200 group-hover:text-white transition-colors leading-relaxed">&ldquo;{activeSpark.text}&rdquo;</p>
             <p className="text-[10px] text-zinc-500 mt-2 group-hover:text-amber-500 transition-colors">↵ Kliknij, aby wstawić</p>
           </button>
         ) : (
-          <button onClick={rollSpark} className="w-full p-4 rounded-xl border border-dashed border-zinc-700 hover:border-purple-500/40 text-zinc-500 hover:text-zinc-300 transition-all text-sm">
+          <button data-roll-spark onClick={rollSpark} className="w-full p-4 rounded-xl border border-dashed border-zinc-700 hover:border-purple-500/40 text-zinc-500 hover:text-zinc-300 transition-all text-sm">
             Kliknij &ldquo;Losuj Iskrę&rdquo; aby rozpocząć
           </button>
         )}
       </div>
 
-      <div>
-        <h4 className="text-xs font-medium text-zinc-400 mb-2 flex items-center gap-1"><span>🎭</span> Nastrój & Klimat</h4>
-        <div className="grid grid-cols-2 gap-1.5">
-          {Object.keys(MOOD_KEYWORDS).map((mood) => (
-            <button key={mood} onClick={() => setActiveMood(activeMood === mood ? null : mood)}
-              className={`px-2.5 py-2 rounded-lg text-[11px] font-medium transition-all ${activeMood === mood ? "bg-amber-500/20 text-amber-400 border border-amber-500/40" : "bg-zinc-800 text-zinc-400 border border-transparent hover:text-zinc-200 hover:bg-zinc-700"}`}>
-              {mood}
-            </button>
-          ))}
+      <div className={klimatFlash ? "rounded-xl ring-2 ring-amber-500/40 animate-[pulse_0.6s_ease-in-out] transition-shadow" : "rounded-xl transition-shadow"}>
+        <div className="flex items-center justify-between mb-2">
+          <h4 className="text-xs font-medium text-zinc-400 flex items-center gap-1"><span>🎭</span> Nastrój & Klimat</h4>
+          <button data-roll-klimat onClick={rollKlimat} className="px-2.5 py-1 rounded-lg bg-gradient-to-r from-amber-500/20 to-rose-500/20 text-[10px] font-medium text-white hover:from-amber-500/30 hover:to-rose-500/30 transition-all active:scale-95">
+            🎲 Losuj Klimat
+          </button>
         </div>
-        {activeMood && (
+        <div className="grid grid-cols-2 gap-1.5">
+          {Object.keys(MOOD_KEYWORDS).map((mood) => {
+            const active = activeMoods.includes(mood);
+            return (
+              <button
+                key={mood}
+                data-mood-tag={mood}
+                data-mood-active={active ? "true" : "false"}
+                onClick={() => toggleMood(mood)}
+                className={`px-2.5 py-2 rounded-lg text-[11px] font-medium transition-all ${active
+                  ? "bg-amber-500/20 text-amber-400 border border-amber-500/40 shadow-[0_0_10px_rgba(245,158,11,0.45)]"
+                  : "bg-zinc-800 text-zinc-400 border border-transparent hover:text-zinc-200 hover:bg-zinc-700"}`}
+              >
+                {mood}
+              </button>
+            );
+          })}
+        </div>
+        {activeMoods.length > 0 && (
           <div className="mt-2 p-3 rounded-xl bg-zinc-800 border border-zinc-700">
-            <p className="text-[10px] text-zinc-500 mb-2">Słowa: <span className="text-amber-400">{activeMood}</span></p>
+            <p className="text-[10px] text-zinc-500 mb-2">Słowa: <span className="text-amber-400">{activeMoods.join(" + ")}</span></p>
             <div className="flex flex-wrap gap-1.5">
               {moodWords.map((word, i) => (
-                <button key={`${word}-${i}`} onClick={() => onInsert(` ${word}`)} className="px-2 py-1 rounded-lg bg-zinc-700 hover:bg-amber-500/10 text-[11px] text-zinc-300 hover:text-amber-400 transition-all">
+                <button key={`${word}-${i}`} data-klimat-word onClick={() => onInsert(` ${word}`)} className="px-2 py-1 rounded-lg bg-zinc-700 hover:bg-amber-500/10 text-[11px] text-zinc-300 hover:text-amber-400 transition-all">
                   {word}
                 </button>
               ))}
@@ -1873,25 +2379,25 @@ function MetronomePanel() {
 
 const RHYME_TYPE_RANK: Record<RhymeType, number> = { exact: 3, assonance: 2, slant: 1 };
 
-/** Marker colors per rhyme type (exact → green, assonance → blue, slant → zinc). */
-const RHYME_TYPE_COLORS: Record<RhymeType, string> = {
-  exact: "#34d399",
-  assonance: "#60a5fa",
-  slant: "#a1a1aa",
-};
-
 /**
- * Rhyme markers that track the actual editor lines.
+ * Rhyme group highlights that track the actual editor lines.
  *
  * An invisible "mirror" div reproduces the textarea's exact metrics (font,
  * size, line-height, padding, width) so every logical line has a real DOM
- * node (`.vault-text-line`) to measure. Markers are positioned in the left
- * margin using `getBoundingClientRect()` relative to the wrapper, and are
- * re-synced on scroll, window resize and container resize (ResizeObserver).
+ * node (`.vault-text-line`) to measure and highlight. Every word that
+ * belongs to a rhyme cluster is wrapped in a span carrying the cluster's
+ * color — the same hex the „Analiza Wersów” panel shows as its color dots —
+ * so internal rhymes and multi-word clusters are highlighted in the editor
+ * exactly as the panel describes them (1:1 sync). The mirror text itself is
+ * transparent: only the highlights show through the bg-transparent textarea
+ * above it. The whole layer is translated by -scrollTop so highlights follow
+ * the textarea's internal scroll, and markers are re-synced on scroll,
+ * window resize and container resize (ResizeObserver).
  */
-function RhymeMarkersOverlay({ lines, types, textareaRef, children }: {
+function RhymeMarkersOverlay({ lines, groups, hits, textareaRef, children }: {
   lines: string[];
-  types: Map<number, RhymeType>;
+  groups: Map<number, string>;
+  hits: Map<number, RhymeHit[]>;
   textareaRef: RefObject<HTMLTextAreaElement | null>;
   children: ReactNode;
 }) {
@@ -1906,21 +2412,25 @@ function RhymeMarkersOverlay({ lines, types, textareaRef, children }: {
     if (!wrapper || !mirror || !ta) return;
 
     // Match the mirror's content width to the textarea's (clientWidth
-    // excludes the vertical scrollbar) so line wrapping lines up.
+    // excludes the vertical scrollbar) so line wrapping lines up, and
+    // translate the highlight layer by the textarea's scroll offset so the
+    // visible slice of the text stays aligned with the visible text.
     mirror.style.width = `${ta.clientWidth}px`;
+    mirror.style.transform = `translateY(${-ta.scrollTop}px)`;
 
     const wrapperRect = wrapper.getBoundingClientRect();
-    const scrollTop = ta.scrollTop;
     const lineEls = mirror.querySelectorAll<HTMLElement>(".vault-text-line");
 
     // Two passes to avoid layout thrash: read every rect first, then write.
+    // Line rects already include the mirror's translateY(-scrollTop), so
+    // markers are placed relative to the wrapper without extra math.
     const rects: DOMRect[] = [];
     lineEls.forEach((el) => rects.push(el.getBoundingClientRect()));
     lineEls.forEach((_, idx) => {
       const marker = markerRefs.current[idx];
-      const type = types.get(idx);
+      const color = groups.get(idx);
       if (!marker) return;
-      if (!type) {
+      if (!color) {
         // Fully clear hidden markers so stale layout from a previous sync
         // (when the line did rhyme) can't linger on an invisible element —
         // also keeps the DOM state exact for anything inspecting markers.
@@ -1931,14 +2441,14 @@ function RhymeMarkersOverlay({ lines, types, textareaRef, children }: {
         return;
       }
       const rect = rects[idx];
-      // Position relative to the wrapper, accounting for the textarea's
-      // internal scroll offset (the mirror itself never scrolls).
+      // Position relative to the wrapper (the rect already accounts for the
+      // mirror's scroll translation).
       marker.style.opacity = "1";
-      marker.style.top = `${rect.top - wrapperRect.top - scrollTop}px`;
+      marker.style.top = `${rect.top - wrapperRect.top}px`;
       marker.style.left = `${rect.left - wrapperRect.left - 12}px`;
       marker.style.height = `${rect.height}px`;
     });
-  }, [textareaRef, types]);
+  }, [textareaRef, groups]);
 
   // Re-sync after content edits / type changes (before paint, no flicker).
   // Also drop stale marker refs when the line count shrinks, so the sync
@@ -1978,24 +2488,27 @@ function RhymeMarkersOverlay({ lines, types, textareaRef, children }: {
 
   return (
     <div ref={wrapperRef} className="relative">
-      {/* Invisible measurement mirror — same metrics as the textarea so
-          wrapping and line heights match exactly. */}
+      {/* Highlight layer — same metrics as the textarea so wrapping and line
+          heights match exactly. The text is transparent: only the per-line
+          group background shows through the bg-transparent textarea above. */}
       <div
         ref={mirrorRef}
         aria-hidden="true"
-        className="invisible absolute top-0 left-0 font-mono text-sm leading-relaxed p-4 whitespace-pre-wrap break-words pointer-events-none"
+        className="absolute top-0 left-0 z-0 font-mono text-sm leading-relaxed p-4 whitespace-pre-wrap break-words pointer-events-none"
+        style={{ color: "transparent" }}
       >
         {lines.map((line, i) => (
           <div key={i} className="vault-text-line min-h-[1.625em]">
-            {line || "\u00A0"}
+            {line ? <RhymeLineHighlights line={line} hits={hits.get(i) ?? []} /> : "\u00A0"}
           </div>
         ))}
       </div>
 
-      {/* Rhyme markers in the left margin — never intercept pointer events. */}
+      {/* Rhyme group markers in the left margin — same color as the line's
+          group dot in „Analiza Wersów”, never intercept pointer events. */}
       <div aria-hidden="true" className="pointer-events-none absolute inset-y-0 left-0 w-3 z-0">
         {lines.map((_, i) => {
-          const type = types.get(i);
+          const color = groups.get(i);
           return (
             <div
               key={i}
@@ -2003,7 +2516,7 @@ function RhymeMarkersOverlay({ lines, types, textareaRef, children }: {
                 markerRefs.current[i] = el;
               }}
               className="absolute left-0 w-1.5 rounded-full opacity-0 transition-opacity duration-150"
-              style={{ backgroundColor: type ? RHYME_TYPE_COLORS[type] : "transparent" }}
+              style={{ backgroundColor: color ?? "transparent" }}
             />
           );
         })}
@@ -2013,6 +2526,64 @@ function RhymeMarkersOverlay({ lines, types, textareaRef, children }: {
       <div className="relative z-10">{children}</div>
     </div>
   );
+}
+
+/**
+ * Start offset of every token in the RAW line (aligned with
+ * `line.trim().split(/\s+/)`): leading whitespace is skipped first, then each
+ * token advances past its following separators. This is the same walk the
+ * engine's hit indexes refer to, so spans wrap exactly the right slices.
+ */
+function tokenStartPositions(line: string): number[] {
+  const starts: number[] = [];
+  let pos = 0;
+  while (pos < line.length && /\s/.test(line[pos])) pos++;
+  const tokens = line.trim().split(/\s+/);
+  for (let i = 0; i < tokens.length; i++) {
+    starts.push(pos);
+    pos += tokens[i].length;
+    while (pos < line.length && /\s/.test(line[pos])) pos++;
+  }
+  return starts;
+}
+
+/**
+ * Renders one transparent mirror line with EVERY rhyme-cluster word wrapped
+ * in a span carrying its cluster color (multiple hits per line supported —
+ * internal rhymes). The original text, including repeated/extra whitespace,
+ * is preserved exactly so the mirror's metrics and wrapping match the
+ * textarea. Hit indexes come from the engine and refer to
+ * `line.trim().split(/\s+/)`; each hit's token is located via the shared
+ * token walk and wrapped in a `data-rhyme-word` span (for the E2E 1:1 check).
+ */
+function RhymeLineHighlights({ line, hits }: { line: string; hits: RhymeHit[] }) {
+  if (hits.length === 0) return <>{line}</>;
+  const tokens = line.trim().split(/\s+/);
+  const starts = tokenStartPositions(line);
+  const nodes: ReactNode[] = [];
+  let cursor = 0;
+  for (const hit of hits) {
+    if (hit.index < 0 || hit.index >= tokens.length) continue;
+    const start = starts[hit.index];
+    if (start < cursor) continue;
+    nodes.push(line.slice(cursor, start));
+    nodes.push(
+      <span
+        key={hit.index}
+        data-rhyme-word={hit.color}
+        style={{
+          backgroundColor: `${hit.color}66`,
+          borderRadius: "0.25rem",
+          boxShadow: `inset 0 -2px 0 ${hit.color}`,
+        }}
+      >
+        {tokens[hit.index]}
+      </span>
+    );
+    cursor = start + tokens[hit.index].length;
+  }
+  nodes.push(line.slice(cursor));
+  return <>{nodes}</>;
 }
 
 type RhymeSortMode = "type" | "similarity";
@@ -2141,11 +2712,39 @@ function VersionsPanel({
   maxActive: number;
 }) {
   const [showArchive, setShowArchive] = useState(false);
+  const [compareMode, setCompareMode] = useState(false);
+  const [baseId, setBaseId] = useState("");
+  const [compareId, setCompareId] = useState("");
   const active = versions.filter((v) => !v.archived);
   const archived = versions.filter((v) => v.archived);
   const nearCap = active.length >= maxActive - 10;
   const atCap = active.length >= maxActive;
   const pct = Math.min(100, Math.round((active.length / maxActive) * 100));
+
+  // Oldest → newest (ISO timestamps sort lexicographically), archive included.
+  const sortedAll = useMemo(
+    () => [...versions].sort((a, b) => a.timestamp.localeCompare(b.timestamp)),
+    [versions]
+  );
+
+  const toggleCompare = useCallback(() => {
+    if (!compareMode && sortedAll.length > 0) {
+      setBaseId(sortedAll[0].id);
+      setCompareId(sortedAll[sortedAll.length - 1].id);
+    }
+    setCompareMode((s) => !s);
+  }, [compareMode, sortedAll]);
+
+  const base = versions.find((v) => v.id === baseId) ?? null;
+  const other = versions.find((v) => v.id === compareId) ?? null;
+  const diff = useMemo(() => {
+    if (!base || !other || base.id === other.id) return null;
+    return diffLines(base.content.split("\n"), other.content.split("\n"));
+  }, [base, other]);
+  const stats = useMemo(() => {
+    if (!base || !other || base.id === other.id) return null;
+    return diffStats(base.content.split("\n"), other.content.split("\n"));
+  }, [base, other]);
 
   return (
     <div className="rounded-xl bg-zinc-900 border border-zinc-800 p-6">
@@ -2161,6 +2760,16 @@ function VersionsPanel({
           }`}>
             {active.length}/{maxActive}
           </span>
+          <button
+            onClick={toggleCompare}
+            className={`px-2.5 py-1 rounded-full text-[10px] font-medium border transition-colors ${
+              compareMode
+                ? "bg-violet-500/15 border-violet-500/40 text-violet-300"
+                : "bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-violet-300 hover:bg-zinc-700"
+            }`}
+          >
+            🔍 Porównaj
+          </button>
           <button
             onClick={() => setShowArchive((s) => !s)}
             className={`px-2.5 py-1 rounded-full text-[10px] font-medium border transition-colors ${
@@ -2242,6 +2851,80 @@ function VersionsPanel({
             </div>
           ) : (
             <p className="text-xs text-zinc-600">Archiwum puste — wersje ponad limit {maxActive} trafiają tutaj zamiast znikać.</p>
+          )}
+        </div>
+      )}
+
+      {compareMode && (
+        <div className="mt-5 pt-4 border-t border-zinc-800">
+          <div className="flex items-center justify-between gap-2 flex-wrap mb-3">
+            <p className="text-xs font-semibold text-zinc-400 uppercase tracking-wide">🔍 Porównaj wersje</p>
+            {stats && (
+              <span className="text-[10px] text-zinc-500 font-mono">
+                <span className="text-emerald-400">+{stats.added}</span>
+                <span className="text-red-400"> −{stats.removed}</span>
+                <span> • {stats.unchanged} wspólnych • {stats.similarity}% podobieństwa</span>
+              </span>
+            )}
+          </div>
+          <div className="flex flex-col sm:flex-row gap-2 mb-3">
+            <label className="flex-1 text-[10px] text-zinc-500">
+              Wersja bazowa (starsza)
+              <select
+                value={baseId}
+                onChange={(e) => setBaseId(e.target.value)}
+                className="w-full mt-1 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500/50 transition-all"
+              >
+                {sortedAll.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                    {v.archived ? " (archiwum)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="flex-1 text-[10px] text-zinc-500">
+              Wersja porównywana (nowsza)
+              <select
+                value={compareId}
+                onChange={(e) => setCompareId(e.target.value)}
+                className="w-full mt-1 px-2 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-white focus:outline-none focus:ring-1 focus:ring-violet-500/50 transition-all"
+              >
+                {sortedAll.map((v) => (
+                  <option key={v.id} value={v.id}>
+                    {v.label}
+                    {v.archived ? " (archiwum)" : ""}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+          {diff ? (
+            diff.length > 0 ? (
+              <div className="rounded-xl bg-zinc-950/60 border border-zinc-800 overflow-y-auto max-h-[320px] font-mono text-xs">
+                {diff.map((line, i) => (
+                  <div
+                    key={i}
+                    className={`px-3 py-1 whitespace-pre-wrap break-words ${
+                      line.type === "added"
+                        ? "bg-emerald-500/10 text-emerald-300"
+                        : line.type === "removed"
+                          ? "bg-red-500/10 text-red-300"
+                          : "text-zinc-500"
+                    }`}
+                  >
+                    <span className="inline-block w-4 select-none mr-2">
+                      {line.type === "added" ? "+" : line.type === "removed" ? "−" : " "}
+                    </span>
+                    {line.text || "\u00A0"}
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <p className="text-xs text-zinc-500 text-center py-4">Wersje są identyczne — brak różnic 🎉</p>
+            )
+          ) : (
+            <p className="text-xs text-zinc-500 text-center py-4">Wybierz dwie różne wersje, aby zobaczyć różnice.</p>
           )}
         </div>
       )}

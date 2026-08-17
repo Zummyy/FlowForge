@@ -135,16 +135,52 @@ export async function submitToChallenge(data: {
   return submission;
 }
 
-export async function voteSubmission(submissionId: string) {
-  return prisma.challengeSubmission.update({
-    where: { id: submissionId },
-    data: { voteCount: { increment: 1 } },
+/** Parse the voters JSON column (anonymous voter ids that already voted). */
+function parseVoters(raw: string | null | undefined): string[] {
+  if (!raw) return [];
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.filter((v): v is string => typeof v === "string") : [];
+  } catch {
+    return [];
+  }
+}
+
+export interface VoteResult {
+  ok: boolean;
+  alreadyVoted: boolean;
+  voteCount: number;
+}
+
+/**
+ * Vote for a cypher submission. DB-primary dedup: each anonymous voter id
+ * (persisted in localStorage by the client) can vote once — the voters JSON
+ * column is read + updated inside a transaction, so double clicks or replays
+ * never inflate the count. Throws when the submission doesn't exist.
+ */
+export async function voteSubmission(submissionId: string, voterId: string): Promise<VoteResult> {
+  const voter = String(voterId || "").trim();
+  if (!voter) return { ok: false, alreadyVoted: true, voteCount: 0 };
+  return prisma.$transaction(async (tx) => {
+    const row = await tx.challengeSubmission.findUnique({
+      where: { id: submissionId },
+      select: { id: true, voteCount: true, voters: true },
+    });
+    if (!row) throw new Error(`Submission ${submissionId} not found`);
+    const voters = parseVoters(row.voters);
+    if (voters.includes(voter)) {
+      return { ok: false, alreadyVoted: true, voteCount: row.voteCount };
+    }
+    const updated = await tx.challengeSubmission.update({
+      where: { id: submissionId },
+      data: {
+        voteCount: { increment: 1 },
+        voters: JSON.stringify([...voters, voter]),
+      },
+      select: { voteCount: true },
+    });
+    return { ok: true, alreadyVoted: false, voteCount: updated.voteCount };
   });
 }
 
-export async function getChallengeSubmissions(challengeId: string) {
-  return prisma.challengeSubmission.findMany({
-    where: { challengeId },
-    orderBy: { voteCount: "desc" },
-  });
-}
+

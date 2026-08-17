@@ -75,6 +75,7 @@ export function ConfirmDialog({
         <div className="px-6 py-4 border-t border-zinc-800 flex items-center justify-end gap-2">
           <button
             ref={cancelRef}
+            data-cancel
             onClick={onCancel}
             className="px-4 py-2 rounded-xl bg-zinc-800 text-zinc-400 text-sm font-medium hover:bg-zinc-700 hover:text-white transition-colors"
           >
@@ -82,6 +83,7 @@ export function ConfirmDialog({
           </button>
           <button
             ref={confirmRef}
+            data-confirm
             onClick={onConfirm}
             className={`px-5 py-2 rounded-xl text-sm font-semibold transition-colors focus:outline-none focus:ring-2 focus:ring-offset-0 ${
               tone === "danger"

@@ -52,12 +52,6 @@ export async function awardPoints(
   return achievement;
 }
 
-export async function getAchievements() {
-  return prisma.userAchievement.findMany({
-    orderBy: { earnedAt: "desc" },
-  });
-}
-
 export async function deleteAchievement(badgeId: string) {
   return prisma.userAchievement.deleteMany({ where: { badgeId } });
 }
@@ -95,12 +89,13 @@ export async function getProfile() {
 // ─── Stats ────────────────────────────────────────────────────────────
 
 export async function getDashboardStats() {
-  const [lyricCount, beatCount, projectCount, postCount, achievementCount, lyricVersions, lyrics] = await Promise.all([
+  const [lyricCount, beatCount, projectCount, postCount, achievementCount, exportCount, lyricVersions, lyrics] = await Promise.all([
     prisma.lyric.count(),
     prisma.beat.count(),
     prisma.savedProject.count(),
     prisma.communityPost.count(),
     prisma.userAchievement.count(),
+    prisma.exportLog.count(),
     prisma.lyricVersion.findMany({ select: { createdAt: true } }),
     prisma.lyric.findMany({ select: { updatedAt: true } }),
   ]);
@@ -122,6 +117,7 @@ export async function getDashboardStats() {
     beatCount: beatCount + projectCount,
     postCount,
     achievementCount,
+    exportCount,
     totalPoints,
     level: calculateLevel(totalPoints),
     levelProgress: getLevelProgress(totalPoints),

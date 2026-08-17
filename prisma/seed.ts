@@ -93,6 +93,17 @@ async function main() {
       tags: "ulica,klasyk",
       duration: 8, // matches the generated public/test-beat-a.wav
       filePath: "/test-beat-a.wav",
+      // Staggered lastPlayedAt — the dashboard „Ostatnio Użyte” widget
+      // reads real history (most recently played first).
+      lastPlayedAt: new Date(Date.now() - 2 * 60 * 60 * 1000),
+      // Stem mixer demo — each track rendered by scripts/generate-demo-beats.mjs.
+      isStems: true,
+      stemsData: JSON.stringify({
+        drums: "/stems/miejski-rytm-drums.wav",
+        bass: "/stems/miejski-rytm-bass.wav",
+        melody: "/stems/miejski-rytm-melody.wav",
+        vocals: "/stems/miejski-rytm-vocals.wav",
+      }),
     },
     {
       id: "beat-nocny-drive",
@@ -104,6 +115,7 @@ async function main() {
       tags: "trap,noc",
       duration: 8, // matches the generated public/test-beat-b.wav
       filePath: "/test-beat-b.wav",
+      lastPlayedAt: new Date(Date.now() - 26 * 60 * 60 * 1000),
     },
     {
       id: "beat-stary-blok",
@@ -115,12 +127,26 @@ async function main() {
       tags: "lofi,nostalgia",
       duration: 8, // matches the generated public/test-beat-a.wav
       filePath: "/test-beat-a.wav",
+      lastPlayedAt: new Date(Date.now() - 3 * DAY),
     },
   ];
   for (const b of beats) {
     await prisma.beat.upsert({
       where: { id: b.id },
-      update: { title: b.title, bpm: b.bpm, genre: b.genre, duration: b.duration },
+      // update mirrors create so re-running the seed keeps stems/files in sync.
+      update: {
+        title: b.title,
+        artist: b.artist,
+        bpm: b.bpm,
+        key: b.key,
+        genre: b.genre,
+        tags: b.tags,
+        duration: b.duration,
+        filePath: b.filePath,
+        isStems: b.isStems || false,
+        stemsData: b.stemsData || null,
+        lastPlayedAt: b.lastPlayedAt,
+      },
       create: { ...b },
     });
   }
