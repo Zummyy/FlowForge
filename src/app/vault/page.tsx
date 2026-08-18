@@ -573,24 +573,28 @@ export default function VaultPage() {
   useEffect(() => {
     try {
       const saved = localStorage.getItem(SORT_KEY);
-      if (!saved) return;
-      const parsed = JSON.parse(saved);
-      if (parsed && typeof parsed === "object") {
-        const m = parsed.mode;
-        if (m === "title" || m === "words" || m === "syllables") setSortMode(m);
-        if (parsed.directions && typeof parsed.directions === "object") {
-          const next = { ...DEFAULT_DIRECTION };
-          for (const k of ["updated", "title", "words", "syllables"] as const) {
-            const d = parsed.directions[k];
-            if (d === "asc" || d === "desc") next[k] = d;
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") {
+          const m = parsed.mode;
+          if (m === "title" || m === "words" || m === "syllables") setSortMode(m);
+          if (parsed.directions && typeof parsed.directions === "object") {
+            const next = { ...DEFAULT_DIRECTION };
+            for (const k of ["updated", "title", "words", "syllables"] as const) {
+              const d = parsed.directions[k];
+              if (d === "asc" || d === "desc") next[k] = d;
+            }
+            setSortDirections(next);
           }
-          setSortDirections(next);
+        } else if (saved === "title" || saved === "words" || saved === "syllables") {
+          // Legacy bare-string value (saved before the direction existed).
+          setSortMode(saved);
         }
-      } else if (saved === "title" || saved === "words" || saved === "syllables") {
-        // Legacy bare-string value (saved before the direction existed).
-        setSortMode(saved);
       }
     } catch { /* ignore */ }
+    // Always mark the mirror as loaded — even when nothing was saved yet —
+    // otherwise the persist effect below would never write on a fresh profile
+    // (the early return used to skip this line entirely).
     setSortLoaded(true);
   }, []);
   useEffect(() => {

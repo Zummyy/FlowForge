@@ -9,6 +9,13 @@ import type { SavedProject, SavedTakeState } from "@/components/studio/types";
 import { recordChallengeEvent } from "@/lib/challenges";
 import { loadCache, saveCache, tryDbWrite } from "@/lib/db-sync";
 import {
+  BEAT_SORT_MODES,
+  DEFAULT_BEAT_DIRECTION,
+  sortBeats,
+  type BeatSortMode,
+  type SortDirection,
+} from "@/lib/beat-sort";
+import {
   createBeat,
   deleteBeat,
   updateBeat,
@@ -42,6 +49,8 @@ interface Beat {
    * library survives reloads. Projects from the Studio have no audio here.
    */
   url?: string;
+  /** ISO timestamp — when the beat/project was created (drives „Data” sort). */
+  createdAt?: string;
   /** DB id when this beat is backed by the Prisma backend. */
   dbId?: string;
   /**
@@ -97,6 +106,7 @@ function toProjectBeat(p: DbProject): Beat {
     kind: "project",
     project: p,
     takes: p.takes,
+    createdAt: p.createdAt,
   };
 }
 
@@ -122,6 +132,7 @@ function toBeat(b: DbBeat): Beat {
     isPlaying: false,
     url: b.filePath || undefined,
     stems: parseStemsData(b.stemsData),
+    createdAt: b.createdAt.toISOString(),
   };
 }
 
@@ -192,13 +203,56 @@ export default function BeatsPage() {
 
   // Cards matching the search box („Szukaj numerów...”) — title + artist,
   // case-insensitive. Previously the query was never applied to the render.
+  // The remembered sort (mode + per-mode direction) is applied AFTER the
+  // filter, so searching and sorting compose.
+  const [beatSortMode, setBeatSortMode] = useState<BeatSortMode>("updated");
+  const [beatSortDirs, setBeatSortDirs] =
+    useState<Record<BeatSortMode, SortDirection>>({ ...DEFAULT_BEAT_DIRECTION });
+  const [beatSortLoaded, setBeatSortLoaded] = useState(false);
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem("flowforge-beat-sort");
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed && typeof parsed === "object") {
+          const m = parsed.mode;
+          if (m === "title" || m === "artist" || m === "bpm") setBeatSortMode(m);
+          if (parsed.directions && typeof parsed.directions === "object") {
+            const next = { ...DEFAULT_BEAT_DIRECTION };
+            for (const k of ["updated", "title", "artist", "bpm"] as const) {
+              const d = parsed.directions[k];
+              if (d === "asc" || d === "desc") next[k] = d;
+            }
+            setBeatSortDirs(next);
+          }
+        }
+      }
+    } catch { /* ignore */ }
+    // Always mark the mirror as loaded — even when nothing was saved yet —
+    // otherwise the persist effect below would never write on a fresh profile
+    // (the early return used to skip this line entirely).
+    setBeatSortLoaded(true);
+  }, []);
+  useEffect(() => {
+    if (!beatSortLoaded) return;
+    try {
+      localStorage.setItem(
+        "flowforge-beat-sort",
+        JSON.stringify({ mode: beatSortMode, directions: beatSortDirs })
+      );
+    } catch { /* ignore */ }
+  }, [beatSortMode, beatSortDirs, beatSortLoaded]);
+
   const visibleBeats = useMemo(() => {
     const q = debouncedQuery.trim().toLowerCase();
-    if (!q) return beats;
-    return beats.filter(
-      (b) => b.title.toLowerCase().includes(q) || b.artist.toLowerCase().includes(q)
-    );
-  }, [beats, debouncedQuery]);
+    const filtered = q
+      ? beats.filter(
+          (b) =>
+            b.title.toLowerCase().includes(q) || b.artist.toLowerCase().includes(q)
+        )
+      : beats;
+    return sortBeats(filtered, beatSortMode, beatSortDirs[beatSortMode]);
+  }, [beats, debouncedQuery, beatSortMode, beatSortDirs]);
 
   // Delete confirmation — one click on 🗑️ used to destroy a beat/project
   // (and, for projects, prune its recordings' rows + files) instantly.
@@ -676,6 +730,7 @@ export default function BeatsPage() {
             isPlaying: false,
             url: opts.file ? dataUrl : undefined,
             stems: stemsData,
+            createdAt: new Date().toISOString(),
           },
           ...prev,
         ]);
@@ -798,8 +853,8 @@ export default function BeatsPage() {
           </button>
         </div>
 
-        {/* Search */}
-        <div className="flex flex-col sm:flex-row gap-3">
+        {/* Search + sort */}
+        <div className="flex flex-col gap-3">
           <div className="flex-1 relative">
             <span className="absolute left-3 top-1/2 -translate-y-1/2 text-zinc-500">🔍</span>
             <input
@@ -809,6 +864,36 @@ export default function BeatsPage() {
               placeholder="Szukaj numerów..."
               className="w-full pl-10 pr-4 py-2.5 rounded-xl bg-zinc-900/50 border border-zinc-800/50 text-white text-sm placeholder:text-zinc-600 focus:outline-none focus:border-amber-500/30"
             />
+          </div>
+          <div className="flex items-center gap-1.5 flex-wrap" role="group" aria-label="Sortowanie numerów">
+            {BEAT_SORT_MODES.map((m) => (
+              <button
+                key={m.id}
+                data-sort-mode={m.id}
+                onClick={() => setBeatSortMode(m.id)}
+                aria-pressed={beatSortMode === m.id}
+                className={`px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors ${
+                  beatSortMode === m.id
+                    ? "bg-amber-500/15 text-amber-400 border border-amber-500/30"
+                    : "bg-zinc-900/50 text-zinc-500 border border-zinc-800/50 hover:text-zinc-300"
+                }`}
+              >
+                {m.icon} {m.label}
+              </button>
+            ))}
+            <button
+              data-sort-dir
+              onClick={() =>
+                setBeatSortDirs((prev) => ({
+                  ...prev,
+                  [beatSortMode]: prev[beatSortMode] === "asc" ? "desc" : "asc",
+                }))
+              }
+              title={`Kierunek: ${beatSortDirs[beatSortMode] === "asc" ? "rosnąco (↑)" : "malejąco (↓)"}`}
+              className="ml-1 px-2.5 py-1.5 rounded-lg text-xs font-medium bg-zinc-900/50 text-zinc-400 border border-zinc-800/50 hover:border-amber-500/30 hover:text-amber-400 transition-colors"
+            >
+              {beatSortDirs[beatSortMode] === "asc" ? "↑ Rosnąco" : "↓ Malejąco"}
+            </button>
           </div>
         </div>
 
@@ -840,7 +925,7 @@ export default function BeatsPage() {
             {visibleBeats.map((beat) => {
               const bars = barHeights(beat.id);
               return (
-              <div key={beat.id} className="rounded-2xl bg-zinc-900/50 border border-zinc-800/50 overflow-hidden card-hover">
+              <div key={beat.id} data-beat-card={beat.id} className="rounded-2xl bg-zinc-900/50 border border-zinc-800/50 overflow-hidden card-hover">
                 <div className="h-32 bg-gradient-to-br from-zinc-800 to-zinc-900 flex items-center justify-center">
                   <div className="flex items-end gap-1 h-16">
                     {bars.map((h, i) => (

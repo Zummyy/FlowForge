@@ -24,7 +24,15 @@ export async function getProjects() {
       const parsed = JSON.parse(r.data) as SavedProject;
       // `sourceId` = the project's original client id (proj-…), kept so the
       // /beats page can dedupe legacy localStorage entries against DB rows.
-      return { ...parsed, id: r.id, dbId: r.id, title: r.title, sourceId: parsed.id };
+      // `createdAt` drives the „Data” sort on /beats.
+      return {
+        ...parsed,
+        id: r.id,
+        dbId: r.id,
+        title: r.title,
+        sourceId: parsed.id,
+        createdAt: r.createdAt.toISOString(),
+      };
     } catch {
       return null;
     }

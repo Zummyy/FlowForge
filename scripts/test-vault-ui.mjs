@@ -84,7 +84,10 @@
 //     empty-title validation keeps it open, saving title/artist/BPM/key
 //     updates the card + DB row (unrelated fields untouched), persists
 //     across reload; the search box filters cards by title/artist
-//     („Brak wyników” empty state, clearing restores the grid)
+//     („Brak wyników” empty state, clearing restores the grid); the sort
+//     control reorders by Data/Nazwa/BPM (self-seeded fixtures, since the
+//     dashboard scenario wipes the beat table) with a direction toggle
+//     and survives a reload via the localStorage mirror
 //   • Create cypher       — „+ Nowy Cypher” on /challenges: modal with
 //     title/description/prize/deadline, empty-title + past-deadline
 //     validation keeps it open, saving renders the card (countdown from the
@@ -4373,8 +4376,90 @@ async function scenarioEditBeat(cdp, appUrl) {
       (await cdp.evaluate(`document.querySelectorAll('div.rounded-2xl').length`)) === allCards,
       "clearing the search restores the full grid"
     );
+
+    // ── Sort: Data / Nazwa / Artysta / BPM + direction (persisted) ──
+    // Scenario 6 (dashboard) wipes the beat table, so the seed beats are gone
+    // by now — seed our own sort fixtures (upserted AFTER the page's last
+    // load, hence the reload below) + the e2e-edit-beat fixture (105 BPM).
+    const sortFixtures = [
+      { id: "e2e-sort-aaa", title: "Aaa Alfabet", artist: "Artysta A", bpm: 100 },
+      { id: "e2e-sort-bbb", title: "Bbb Beta", artist: "Artysta B", bpm: 120 },
+      { id: "e2e-sort-ccc", title: "Ccc Gamma", artist: "Artysta C", bpm: 80 },
+    ];
+    for (const f of sortFixtures) {
+      const { id, ...rest } = f;
+      await prisma().beat.upsert({ where: { id }, update: { ...rest }, create: { ...f, genre: "Demo", duration: 8, filePath: "/test-beat-a.wav" } });
+    }
+    await cdp.goto(root + "/beats", `document.body.textContent.includes('Gotowe Numery')`);
+    await sleep(1200);
+
+    // Plain-string scripts — interpolating an arrow function would embed its
+    // SOURCE as a string (String(fn)), which the browser then returns as-is.
+    const titlesScript =
+      "(() => [...document.querySelectorAll('[data-beat-card]')].map((c) => c.querySelector('h3')?.textContent || '').join('|'))";
+    const clickMode = (mode) =>
+      cdp.evaluate(`(() => { const b = document.querySelector('[data-sort-mode="${mode}"]'); if (!b) return false; b.click(); return true; })()`);
+    const clickDir = () =>
+      cdp.evaluate(`(() => { const b = document.querySelector('[data-sort-dir]'); if (!b) return false; b.click(); return true; })()`);
+    const order = async () => (await cdp.evaluate(`(${titlesScript})()`)).split("|");
+
+    check(await clickMode("title"), "clicked sort by Nazwa");
+    await sleep(250);
+    let t = await order();
+    check(
+      t.indexOf("Aaa Alfabet") < t.indexOf("Bbb Beta") &&
+        t.indexOf("Bbb Beta") < t.indexOf("Ccc Gamma") &&
+        t.indexOf("Ccc Gamma") < t.indexOf("Nowy Tytul E2E"),
+      `Nazwa asc: Aaa < Bbb < Ccc < Nowy (got ${t.join(" | ")})`
+    );
+
+    check(await clickDir(), "toggled the sort direction");
+    await sleep(250);
+    t = await order();
+    check(
+      t.indexOf("Nowy Tytul E2E") < t.indexOf("Ccc Gamma") &&
+        t.indexOf("Ccc Gamma") < t.indexOf("Bbb Beta") &&
+        t.indexOf("Bbb Beta") < t.indexOf("Aaa Alfabet"),
+      `Nazwa desc: Nowy > Ccc > Bbb > Aaa (got ${t.join(" | ")})`
+    );
+
+    check(await clickMode("bpm"), "clicked sort by BPM");
+    await sleep(250);
+    t = await order();
+    check(
+      t.indexOf("Ccc Gamma") < t.indexOf("Aaa Alfabet") &&
+        t.indexOf("Aaa Alfabet") < t.indexOf("Nowy Tytul E2E") &&
+        t.indexOf("Nowy Tytul E2E") < t.indexOf("Bbb Beta"),
+      `BPM asc: 80 < 100 < 105 < 120 (got ${t.join(" | ")})`
+    );
+
+    check(await clickMode("updated"), "clicked sort by Data");
+    await sleep(250);
+    t = await order();
+    check(
+      ["Aaa Alfabet", "Bbb Beta", "Ccc Gamma"].includes(t[0]),
+      `Data desc: a just-created fixture is first (got ${t.join(" | ")})`
+    );
+
+    // Back to title asc, then reload → the sort survives (localStorage mirror).
+    check(await clickMode("title"), "clicked sort by Nazwa again");
+    await sleep(200);
+    check(await clickDir(), "flipped direction back to asc");
+    await sleep(200);
+    await cdp.goto(root + "/beats", `document.body.textContent.includes('Gotowe Numery')`);
+    await sleep(1200);
+    t = await order();
+    const persisted = await cdp.evaluate(
+      `document.querySelector('[data-sort-mode="title"]')?.getAttribute('aria-pressed')`
+    );
+    check(
+      persisted === "true" && t[0] === "Aaa Alfabet",
+      `sort persists across reload (Nazwa asc, first = Aaa Alfabet; got ${t.join(" | ")})`
+    );
   } finally {
-    await prisma().beat.deleteMany({ where: { id: "e2e-edit-beat" } });
+    await prisma().beat.deleteMany({
+      where: { id: { in: ["e2e-edit-beat", "e2e-sort-aaa", "e2e-sort-bbb", "e2e-sort-ccc"] } },
+    });
   }
 }
 

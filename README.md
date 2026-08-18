@@ -71,7 +71,7 @@ in `next.config.mjs` makes the IP work out of the box).
 | `npm run gen:beats` | Regenerate the demo WAVs in `public/` (full beats + the per-stem tracks in `public/stems/` for the /beats mixer) |
 | `npm run gen:icons` | Regenerate the PWA icons (`public/icon-192/512.png`) — needed by the manifest |
 | `npm test`          | Run everything: unit suites **then** the E2E suite (exit 1 on any failure)    |
-| `npm run test:unit` | Run the 8 unit suites (`scripts/test-*.ts`)                                    |
+| `npm run test:unit` | Run the 10 unit suites (`scripts/test-*.ts`)                                   |
 | `npm run test:ui`   | Run the E2E browser suite (`scripts/test-vault-ui.mjs`)                        |
 
 ### The demo seed
@@ -185,7 +185,7 @@ framework — plain CDP over Node):
   with its WAL/SHM siblings; `DATABASE_URL` is pointed at the copy before any
   Prisma client is constructed). Your real database is never opened — the copy
   is deleted in a `finally`, even on crash.
-- 25 scenarios (≈615 checks): Vault tools (rhyme markers — full-text word-level
+- 25 scenarios (≈624 checks): Vault tools (rhyme markers — full-text word-level
   clustering: internal rhymes („Płomień”↔„Promień” mid-line), multi-word and
   assonance/near-rhyme clusters („dziwny/inni”, „jakiś/taki”); the editor
   highlights EVERY matching word with its cluster color, 1:1 with the
@@ -221,7 +221,11 @@ framework — plain CDP over Node):
   the ✏️ beat edit modal (prefilled from the row, empty-title validation,
   title/artist/BPM/key saved to the DB, unrelated fields untouched, edit
   persists across reload; the /beats search box filters cards by
-  title/artist with a „Brak wyników” state — regression guard), destructive
+  title/artist with a „Brak wyników” state — regression guard; the /beats
+  sort control reorders by Data/Nazwa/Artysta/BPM with a direction toggle
+  — self-seeded fixtures, since the dashboard scenario wipes the beat
+  table — and the chosen mode+direction survive a reload via the
+  localStorage mirror), destructive
   actions on /beats + /cover are gated by the shared ConfirmDialog (cancel
   keeps the row; the project-delete dialog warns the takes' recordings are
   pruned), and the
@@ -252,9 +256,10 @@ src/app/                    # Pages: vault, studio, beats, challenges, feed,
                             #   inspirations, cover, budget, profile, academy
 src/components/studio/      # Studio shared components (toast, dialogs, types)
 src/lib/                    # Pure logic + shared constants (rhyme engine,
-                            #   syllable counter, db-sync, track sort/filter,
+                            #   syllable counter, db-sync, track/beat sort,
                             #   lyric-versions cap, challenges, prisma client)
-scripts/test-*.ts           # Unit suites (run via npm run test:unit)
+scripts/test-*.ts           # Unit suites (run via npm run test:unit, incl.
+                            #   the pure beat-sort helper)
 scripts/test-vault-ui.mjs   # E2E browser suite
 scripts/generate-demo-beats.mjs  # Demo WAV generator (npm run gen:beats)
 public/test-beat-*.wav      # Generated demo beats (playable audio)
